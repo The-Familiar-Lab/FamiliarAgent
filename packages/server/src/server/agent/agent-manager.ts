@@ -109,6 +109,19 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 
 type TimeoutResult = "completed" | "timed_out";
 
+function matchesPersistedEmptyThread(
+  record: StoredAgentRecord | null | undefined,
+  handle: AgentPersistenceHandle,
+): boolean {
+  return (
+    record?.persistence?.provider === handle.provider &&
+    record.persistence.sessionId === handle.sessionId &&
+    record.persistence.metadata?.emptyThread === true &&
+    record.lastUserMessageAt === null &&
+    !record.archivedAt
+  );
+}
+
 function submittedPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
     return prompt;
@@ -1395,18 +1408,63 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const verifiedResumeOptions = await this.verifyEmptyThreadRecovery(
+      handle,
+      resolvedAgentId,
+      record ? record.lastUserMessageAt : options?.lastUserMessageAt,
+      currentResumeOptions,
+    );
     const session = await client.resumeSession(
       handle,
       providerLaunchConfig,
       launchContext,
-      currentResumeOptions,
+      verifiedResumeOptions,
     );
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
-      persistence: handle,
+      persistence: verifiedResumeOptions?.allowEmptyThreadRecovery
+        ? (session.describePersistence() ?? handle)
+        : handle,
       restoring: true,
     });
+  }
+
+  private async verifyEmptyThreadRecovery(
+    handle: AgentPersistenceHandle,
+    agentId: string,
+    lastUserMessageAt: Date | string | null | undefined,
+    options?: AgentResumeSessionOptions,
+  ): Promise<AgentResumeSessionOptions | undefined> {
+    const verified = options ? { ...options } : undefined;
+    if (verified) delete verified.allowEmptyThreadRecovery;
+    if (
+      handle.provider !== "codex" ||
+      handle.metadata?.emptyThread !== true ||
+      options?.purpose === "history" ||
+      lastUserMessageAt !== null ||
+      !this.registry ||
+      (this.timelineStore.has(agentId) && this.timelineStore.getRows(agentId).length > 0)
+    )
+      return verified;
+    try {
+      const record = await this.registry.get(agentId);
+      if (!matchesPersistedEmptyThread(record, handle)) return verified;
+      if (
+        this.durableTimelineStore &&
+        (await this.durableTimelineStore.getLatestCommittedSeq(agentId)) !== 0
+      )
+        return verified;
+      // The production registry's marker is cleared and committed before any native work.
+      // The optional timeline store is an additional check, not the durability authority.
+      return { ...verified, allowEmptyThreadRecovery: true };
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId },
+        "Could not verify empty Codex history; recovery disabled",
+      );
+    }
+    return verified;
   }
 
   importProviderSession(input: {
@@ -1568,7 +1626,12 @@ export class AgentManager {
 
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
       session = handle
-        ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+        ? await client.resumeSession(
+            handle,
+            providerLaunchConfig,
+            launchContext,
+            await this.verifyEmptyThreadRecovery(handle, agentId, existing.lastUserMessageAt),
+          )
         : await client.createSession(providerLaunchConfig, launchContext);
       await this.requireExternalMcpSupport(session, storedConfig);
       this.assertAcceptingAgentRegistrations();
@@ -2381,6 +2444,7 @@ export class AgentManager {
     };
     void (async () => {
       try {
+        if (agent.session.prepareForTurn) await this.prepareSessionForTurn(agent);
         await handler.run({ emit: dispatch });
       } catch (error) {
         const text = error instanceof Error ? error.message : "Out-of-band command failed";
@@ -2429,6 +2493,14 @@ export class AgentManager {
     });
   }
 
+  private async prepareSessionForTurn(agent: ActiveManagedAgent): Promise<void> {
+    if (!agent.session.prepareForTurn) return;
+    agent.session.prepareForTurn();
+    this.refreshSessionPersistence(agent);
+    // A crash after the native request must not leave a durable "never started" marker.
+    await this.persistSnapshot(agent);
+  }
+
   private async startPendingForegroundTurn(params: {
     agent: ActiveManagedAgent;
     agentId: string;
@@ -2438,6 +2510,9 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
+      if (agent.session.prepareForTurn) await this.prepareSessionForTurn(agent);
+      if (pendingRun.settled)
+        throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
@@ -3972,7 +4047,10 @@ export class AgentManager {
       agent.runtimeInfo = newInfo;
       if (!agent.persistence && newInfo.sessionId) {
         agent.persistence = attachPersistenceCwd(
-          { provider: agent.provider, sessionId: newInfo.sessionId },
+          agent.session.describePersistence() ?? {
+            provider: agent.provider,
+            sessionId: newInfo.sessionId,
+          },
           agent.cwd,
         );
       }

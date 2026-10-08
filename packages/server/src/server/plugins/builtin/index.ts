@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const builtinPlugins = [
+  "familiar-workspace",
   "antigravity-provider",
   "claude-usage-source",
   "codex-usage-source",

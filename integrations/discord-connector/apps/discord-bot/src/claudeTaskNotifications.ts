@@ -1,0 +1,271 @@
+import type { DiscordGuildSurface } from "./codexSessionSync.js";
+import { prepareAgentCompletionAnswer } from "./agentCompletionAnswer.js";
+import type { DiscoveredClaudeCodeSession } from "./claudeSessionSync.js";
+import { isExternallyStartedClaudeCodeSession } from "./claudeSessionSync.js";
+import type {
+  ClaudeCodeCompletionNotificationState,
+  DirectSyncState,
+  DirectSyncStateStore,
+} from "./directState.js";
+import {
+  appendAgentResultContinuationMessages,
+  discordFileOnlyPayloads,
+  getAgentResultContinuationMessages,
+  isAgentQuestionMessage,
+  registerAnswerCopyText,
+  type DiscordMessagePayload,
+} from "./responses.js";
+
+const MAX_FIELD_CHARS = 180;
+const ANSWER_ATTACHMENT_NAME = "claude-answer.txt";
+const ANSWER_EMBED_COLOR = 0x8e44ad;
+const CLAUDE_COMPLETION_NOTIFICATION_SCOPE = "external-claude-code-idle-assistant-messages-v2";
+export const DEFAULT_CLAUDE_COMPLETION_IDLE_MS = 120_000;
+
+export interface NotifyClaudeCodeTaskCompletionsInput {
+  guild: Pick<DiscordGuildSurface, "sendTextMessage">;
+  stateStore: DirectSyncStateStore;
+  sessions: DiscoveredClaudeCodeSession[];
+  mentionRoleIds?: string[];
+  idleMs?: number;
+  now?: Date;
+}
+
+export interface NotifyClaudeCodeTaskCompletionsResult {
+  checkedSessions: number;
+  completedSessions: number;
+  notifiedSessions: number;
+  initialized: boolean;
+}
+
+function sanitizeInline(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/`/g, "'")
+    .replace(/@/g, "[at]")
+    .trim()
+    .slice(0, MAX_FIELD_CHARS);
+}
+
+function normalizedSessionId(sessionId: string): string {
+  return sessionId.trim().toLowerCase();
+}
+
+function nextNotificationState(input: {
+  session: DiscoveredClaudeCodeSession;
+  notifiedAt?: string | null;
+}): ClaudeCodeCompletionNotificationState {
+  return {
+    sessionId: input.session.id,
+    lastAssistantMessageKey: input.session.latestAssistantMessageKey ?? "",
+    threadName: input.session.firstUserMessage,
+    updatedAt: input.session.updatedAt,
+    notifiedAt: input.notifiedAt ?? null,
+  };
+}
+
+function completionState(input: {
+  state: DirectSyncState;
+  notificationsBySession: Map<string, ClaudeCodeCompletionNotificationState>;
+  now: string;
+}): DirectSyncState {
+  return {
+    ...input.state,
+    claudeCompletionNotificationsInitializedAt:
+      input.state.claudeCompletionNotificationsInitializedAt ?? input.now,
+    claudeCompletionNotificationScope: CLAUDE_COMPLETION_NOTIFICATION_SCOPE,
+    claudeCompletionNotifications: [...input.notificationsBySession.values()],
+  };
+}
+
+function formatClaudeCompleteNotification(session: DiscoveredClaudeCodeSession): DiscordMessagePayload {
+  const threadName = sanitizeInline(session.firstUserMessage) || session.id.slice(0, 8);
+  const cwd = sanitizeInline(session.cwd);
+  const updatedAt = sanitizeInline(session.updatedAt);
+  const rawAnswer = session.latestAssistantMessage ?? "";
+  const preparedAnswer = prepareAgentCompletionAnswer({
+    agent: "claude",
+    answer: rawAnswer,
+    attachmentName: ANSWER_ATTACHMENT_NAME,
+  });
+  const lines = [
+    "**Claude Code 작업 완료**",
+    `세션: \`${threadName}\``,
+    cwd ? `위치: \`${cwd}\`` : null,
+    updatedAt ? `업데이트: \`${updatedAt}\`` : null,
+    `Claude session: \`${session.id}\``,
+  ].filter((line): line is string => Boolean(line));
+
+  const payload: DiscordMessagePayload = {
+    allowedMentions: { parse: [] },
+    content: lines.join("\n"),
+    embeds: [
+      {
+        title: "답변",
+        color: ANSWER_EMBED_COLOR,
+        description: preparedAnswer.description,
+      },
+    ],
+    components: [],
+  };
+
+  registerAnswerCopyText(payload, preparedAnswer.answer);
+  const files = preparedAnswer.files;
+
+  if (files.length > 0) {
+    appendAgentResultContinuationMessages(payload, discordFileOnlyPayloads(files));
+  }
+
+
+  if (preparedAnswer.surveyMessages.length > 0) {
+    appendAgentResultContinuationMessages(payload, preparedAnswer.surveyMessages);
+  }
+
+  return payload;
+}
+
+function isClaudeCompletionCandidate(session: DiscoveredClaudeCodeSession, input: { now: Date; idleMs: number }): boolean {
+  if (
+    !isExternallyStartedClaudeCodeSession(session) ||
+    !session.latestAssistantMessage ||
+    !session.latestAssistantMessageKey ||
+    session.latestActivityKind !== "assistant_text"
+  ) {
+    return false;
+  }
+
+  const updatedAtMs = Date.parse(session.updatedAt);
+
+  if (!Number.isFinite(updatedAtMs)) {
+    return false;
+  }
+
+  return updatedAtMs <= input.now.getTime() - input.idleMs;
+}
+
+export async function notifyClaudeCodeTaskCompletions(
+  input: NotifyClaudeCodeTaskCompletionsInput,
+): Promise<NotifyClaudeCodeTaskCompletionsResult> {
+  const state = await input.stateStore.read();
+  const notificationsBySession = new Map(
+    state.claudeCompletionNotifications.map((notification) => [
+      normalizedSessionId(notification.sessionId),
+      notification,
+    ]),
+  );
+  const channelGroupsByClaudeSession = new Map<string, typeof state.sessionChannels>();
+
+  for (const channel of state.sessionChannels) {
+    if (channel.channelMode !== "claude-code" || !channel.claudeSessionId) {
+      continue;
+    }
+
+    const sessionId = normalizedSessionId(channel.claudeSessionId);
+    channelGroupsByClaudeSession.set(sessionId, [
+      ...(channelGroupsByClaudeSession.get(sessionId) ?? []),
+      channel,
+    ]);
+  }
+
+  const channelsByClaudeSession = new Map(
+    [...channelGroupsByClaudeSession]
+      .filter(([, channels]) => channels.length === 1)
+      .map(([sessionId, channels]) => [sessionId, channels[0]]),
+  );
+  const initialized =
+    Boolean(state.claudeCompletionNotificationsInitializedAt) &&
+    state.claudeCompletionNotificationScope === CLAUDE_COMPLETION_NOTIFICATION_SCOPE;
+  const nowDate = input.now ?? new Date();
+  const now = nowDate.toISOString();
+  const idleMs = Math.max(0, input.idleMs ?? DEFAULT_CLAUDE_COMPLETION_IDLE_MS);
+  let completedSessions = 0;
+  let notifiedSessions = 0;
+  let changed = false;
+  const persistState = async () => {
+    await input.stateStore.update((latestState) => completionState({
+      state: latestState,
+      notificationsBySession,
+      now,
+    }));
+  };
+
+  for (const session of input.sessions) {
+    if (!isClaudeCompletionCandidate(session, { now: nowDate, idleMs })) {
+      continue;
+    }
+
+    completedSessions += 1;
+
+    const sessionKey = normalizedSessionId(session.id);
+    const previous = notificationsBySession.get(sessionKey);
+
+    if (previous?.lastAssistantMessageKey === session.latestAssistantMessageKey) {
+      continue;
+    }
+
+    const syncedChannel = channelsByClaudeSession.get(sessionKey);
+
+    if (!initialized) {
+      notificationsBySession.set(sessionKey, nextNotificationState({ session, notifiedAt: null }));
+      changed = true;
+      continue;
+    }
+
+    if (!syncedChannel || !input.guild.sendTextMessage) {
+      continue;
+    }
+
+    await persistState();
+    changed = false;
+
+    const notification = formatClaudeCompleteNotification(session);
+    const continuations = getAgentResultContinuationMessages(notification);
+    const operatorRoleIds = input.mentionRoleIds?.filter((roleId) => roleId.trim().length > 0) ?? [];
+    const completionMentionRoleIds =
+      syncedChannel.discordDeliveryMode === "thread"
+        ? operatorRoleIds
+        : [];
+    const questionWillMention = continuations.some(isAgentQuestionMessage) && operatorRoleIds.length > 0;
+
+    if (completionMentionRoleIds.length > 0 && !questionWillMention) {
+      await input.guild.sendTextMessage(
+        syncedChannel.discordChannelId,
+        notification,
+        { mentionRoleIds: completionMentionRoleIds },
+      );
+    } else {
+      await input.guild.sendTextMessage(syncedChannel.discordChannelId, notification);
+    }
+
+    for (const continuation of continuations) {
+      if (isAgentQuestionMessage(continuation) && operatorRoleIds.length > 0) {
+        await input.guild.sendTextMessage(
+          syncedChannel.discordChannelId,
+          continuation,
+          { mentionRoleIds: operatorRoleIds },
+        );
+      } else {
+        await input.guild.sendTextMessage(syncedChannel.discordChannelId, continuation);
+      }
+    }
+
+    notifiedSessions += 1;
+    notificationsBySession.set(sessionKey, nextNotificationState({ session, notifiedAt: now }));
+    changed = true;
+  }
+
+  if (!initialized) {
+    changed = true;
+  }
+
+  if (changed) {
+    await persistState();
+  }
+
+  return {
+    checkedSessions: input.sessions.length,
+    completedSessions,
+    notifiedSessions,
+    initialized: !initialized,
+  };
+}

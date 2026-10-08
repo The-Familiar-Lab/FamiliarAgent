@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import {
   getWorkspaceNamingAttachments,
+  portableForkSetup,
+  forkLaunchTarget,
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 
@@ -46,4 +48,30 @@ describe("getWorkspaceNamingAttachments", () => {
 
     expect(getWorkspaceNamingAttachments([chatHistory, prContext])).toEqual([prContext]);
   });
+});
+
+it("starts a fork as chat despite a previously used terminal, without migrating machine-specific setup", () => {
+  expect(forkLaunchTarget(null, { kind: "terminal", profileId: "shell" }, true)).toEqual({
+    kind: "chat",
+  });
+  expect(
+    portableForkSetup({
+      provider: "codex",
+      cwd: "/source/project",
+      model: "source-model",
+      modeId: "source-mode",
+      thinkingOptionId: "high",
+      featureValues: { elevated: true },
+    }),
+  ).toEqual({
+    provider: "codex",
+    cwd: "",
+    model: null,
+    modeId: null,
+    thinkingOptionId: null,
+    featureValues: {},
+  });
+  expect(remapDraftCwdToWorkspace({ cwd: "", workspaceDirectory: "/destination/project" })).toBe(
+    "/destination/project",
+  );
 });

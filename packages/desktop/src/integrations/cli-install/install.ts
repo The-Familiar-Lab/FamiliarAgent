@@ -1,8 +1,9 @@
 import { promises as fs } from "node:fs";
 import { app } from "electron";
 import log from "electron-log/main";
+import path from "node:path";
 import { resolveCliInstallSourcePath } from "./path.js";
-import { getBundledCliShimPath, getCliTargetPath, getLocalBinDir } from "./paths.js";
+import { getBundledCliShimPath, getCliTargetPath, getStableCliTargetPath } from "./paths.js";
 import { ensurePathInShellRc } from "./shell-rc.js";
 
 interface InstallStatus {
@@ -20,6 +21,34 @@ async function pathOrSymlinkExists(p: string): Promise<boolean> {
 
 export async function installCli(): Promise<InstallStatus> {
   const targetPath = getCliTargetPath();
+  await writeCliLauncher(getStableCliTargetPath());
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  if (await pathOrSymlinkExists(targetPath)) await fs.unlink(targetPath);
+  if (process.platform === "win32") {
+    await fs.copyFile(getStableCliTargetPath(), targetPath);
+  } else {
+    await fs.symlink(getStableCliTargetPath(), targetPath);
+  }
+  const { shellUpdated } = await ensurePathInShellRc();
+  if (shellUpdated) log.info("[integrations] Updated shell rc with ~/.local/bin PATH");
+  return getCliInstallStatus();
+}
+
+/** Always expose the same launcher location without changing shell startup files. */
+export async function ensureStableCli(): Promise<void> {
+  const target = getStableCliTargetPath();
+  // A server installed separately may already own this launcher; preserve it.
+  if (await pathOrSymlinkExists(target)) {
+    const entry = await fs.lstat(target);
+    if (!entry.isSymbolicLink()) return;
+    if ((await fs.readlink(target)) === getBundledCliShimPath()) return;
+    const previous = await fs.readlink(target);
+    if (!previous.includes("FamiliarAgent.app/Contents/Resources/bin/")) return;
+  }
+  await writeCliLauncher(target);
+}
+
+async function writeCliLauncher(targetPath: string): Promise<void> {
   const shimPath = getBundledCliShimPath();
   const installSourcePath = resolveCliInstallSourcePath({
     platform: process.platform,
@@ -28,9 +57,7 @@ export async function installCli(): Promise<InstallStatus> {
     shimPath,
     appImagePath: process.env.APPIMAGE,
   });
-  const binDir = getLocalBinDir();
-
-  await fs.mkdir(binDir, { recursive: true });
+  await fs.mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
 
   if (process.platform === "win32") {
     if (await pathOrSymlinkExists(targetPath)) {
@@ -56,13 +83,6 @@ export async function installCli(): Promise<InstallStatus> {
     }
     await fs.symlink(installSourcePath, targetPath);
   }
-
-  const { shellUpdated } = await ensurePathInShellRc();
-  if (shellUpdated) {
-    log.info("[integrations] Updated shell rc with ~/.local/bin PATH");
-  }
-
-  return getCliInstallStatus();
 }
 
 export async function getCliInstallStatus(): Promise<InstallStatus> {

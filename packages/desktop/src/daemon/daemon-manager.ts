@@ -1,5 +1,16 @@
+import { remoteWebForwards } from "../features/familiar/web-forward.js";
+import { discordConnection } from "../features/familiar/discord.js";
+import { ensureFamiliarDefaults } from "../features/familiar/defaults.js";
+import { familiarPaths } from "../features/familiar/paths.js";
+import {
+  registerFileStream,
+  releaseFileStream,
+  saveFileStream,
+} from "../features/familiar/file-stream.js";
+import { prepareRemoteServer } from "../features/familiar/remote-setup.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { homedir } from "node:os";
 import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
 import {
@@ -301,6 +312,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
   }
 
   const home = getPaseoHome();
+  await ensureFamiliarDefaults(home);
   const invocation = createNodeEntrypointInvocation({
     entrypoint: resolveDaemonRunnerEntrypoint(),
     argvMode: "node-script",
@@ -312,7 +324,11 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       home,
       timeoutMs: 30_000,
       ...invocation,
-      env: { ...invocation.env, PASEO_CLI: getBundledCliShimPath() },
+      env: {
+        ...invocation.env,
+        PATH: `${familiarPaths().bin}:${familiarPaths().providers}:${homedir()}/.local/bin:${invocation.env.PATH ?? process.env.PATH ?? ""}`,
+        PASEO_CLI: getBundledCliShimPath(),
+      },
       mode: "managed",
       desktopManaged: true,
       onAcquired: (instance) => {
@@ -405,6 +421,28 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       appVersion: resolveDesktopAppVersion(),
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
     }),
+    familiar_prepare_remote_web: (args) => remoteWebForwards.prepare(args),
+    familiar_release_remote_web: (args) => remoteWebForwards.close(args),
+    familiar_discord_status: () => discordConnection.status(),
+    familiar_discord_save: (args) => discordConnection.save(args),
+    familiar_discord_start: async () => {
+      await discordConnection.start();
+      return discordConnection.status();
+    },
+    familiar_discord_stop: async () => {
+      await discordConnection.stop();
+      return discordConnection.status();
+    },
+    familiar_save_file: (args) => saveFileStream(args),
+    familiar_file_stream: (args) => registerFileStream(args),
+    familiar_release_file_stream: (args) => releaseFileStream(args),
+    familiar_prepare_remote: (args) =>
+      prepareRemoteServer(
+        args,
+        app.isPackaged
+          ? path.join(process.resourcesPath, "familiar", "remote-bootstrap.sh")
+          : path.join(app.getAppPath(), "assets", "familiar", "remote-bootstrap.sh"),
+      ),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
     desktop_local_credential: async (args) => {
       const instance = await readDaemonInstance(getPaseoHome());

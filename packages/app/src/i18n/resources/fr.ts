@@ -332,6 +332,7 @@ export const fr: TranslationResources = {
       copyCode: "Copier le code",
       copyTurn: "Copier l’échange",
       copyMessage: "Copier le message",
+      forkOnAnotherHost: "Créer une branche sur un autre serveur…",
       forkMenu: "Forker la conversation à partir d’ici",
       forkInNewTab: "Forker dans un nouvel onglet",
       forkInNewWorkspace: "Forker dans un nouvel espace de travail",

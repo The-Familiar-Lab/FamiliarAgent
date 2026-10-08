@@ -1,3 +1,4 @@
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { expandUserPath } from "../../classify.js";
 import { createInterface } from "node:readline/promises";
@@ -209,6 +210,45 @@ async function remove(
 
 export function createPluginCommand(): Command {
   const plugin = new Command("plugin").description("Manage trusted, unsandboxed plugins");
+  addJsonAndDaemonHostOptions(
+    plugin
+      .command("call")
+      .description("Call a trusted plugin contract, including FamiliarAgent shared workspaces")
+      .argument("<id>")
+      .argument("<method>")
+      .argument("[input]", "JSON input", "{}")
+      .option("--input-file <path>", "Read JSON input from a file instead of command arguments"),
+  ).action(
+    withOutput(
+      async (
+        id: string,
+        method: string,
+        input: string,
+        options: PluginOptions,
+        _command: Command,
+      ): Promise<SingleResult<{ result: unknown }>> => {
+        let json = input;
+        if (typeof options.inputFile === "string") {
+          if ((await stat(options.inputFile)).size > 8 * 1024 * 1024)
+            throw new Error("Plugin input exceeds 8 MiB");
+          json = await readFile(options.inputFile, "utf8");
+        }
+        if (Buffer.byteLength(json) > 8 * 1024 * 1024)
+          throw new Error("Plugin input exceeds 8 MiB");
+        const result = await withPluginManagementClient(options.daemonTarget, (client) =>
+          client.invokePluginRpc(id, method, JSON.parse(json)),
+        );
+        return {
+          type: "single",
+          data: { result },
+          schema: {
+            idField: "result",
+            columns: [{ header: "RESULT", field: (row) => JSON.stringify(row.result), width: 100 }],
+          },
+        };
+      },
+    ),
+  );
   addJsonOption(
     plugin
       .command("init")

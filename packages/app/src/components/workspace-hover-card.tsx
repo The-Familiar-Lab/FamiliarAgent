@@ -15,6 +15,7 @@ import {
   FileDiff,
   Folder,
   GitBranch,
+  Bot,
   Server,
 } from "lucide-react-native";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
@@ -39,6 +40,10 @@ import {
 import { formatCheckPresentationCountsLabel } from "@/git/check-presentation-copy";
 import { CheckPresentationIcon, getCheckPresentationTone } from "@/git/check-presentation.view";
 import { buildForgeChecksUrl } from "@/git/forge-url";
+import { useShallow } from "zustand/react/shallow";
+import { useSessionStore } from "@/stores/session-store";
+import { extractAgentModel } from "@/utils/extract-agent-model";
+import { isWorkspaceRootAgent } from "@/subagents/policies";
 
 const HOVER_CARD_WIDTH = 260;
 
@@ -105,6 +110,7 @@ function WorkspaceHoverCardContent({
         </View>
       ) : null}
       <HostRow serverId={workspace.serverId} />
+      <ModelRows serverId={workspace.serverId} workspaceId={workspace.workspaceId} />
       {workspace.currentBranch ? (
         <CopyableInfoRow
           icon={ThemedGitBranch}
@@ -136,6 +142,7 @@ function WorkspaceHoverCardContent({
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedServer = withUnistyles(Server);
+const ThemedBot = withUnistyles(Bot);
 const ThemedFileDiff = withUnistyles(FileDiff);
 
 type CardInfoIcon = React.ComponentType<React.ComponentProps<typeof ThemedGitBranch>>;
@@ -146,6 +153,37 @@ function HostRow({ serverId }: { serverId: string }): ReactElement | null {
   const label = host?.label?.trim() || serverId;
 
   return <InfoRow icon={ThemedServer} value={label} testID="hover-card-workspace-host" />;
+}
+
+function ModelRows({ serverId, workspaceId }: { serverId: string; workspaceId: string }) {
+  // The hover content mounts only while open; closed rows do not subscribe to agent updates.
+  const models = useSessionStore(
+    useShallow((state) => {
+      const agents = state.sessions[serverId]?.agents;
+      if (!agents) return [];
+      const labels = [...agents.values()]
+        .filter(
+          (agent) =>
+            agent.workspaceId === workspaceId &&
+            !agent.archivedAt &&
+            isWorkspaceRootAgent(
+              agent,
+              agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined,
+            ),
+        )
+        .map((agent) => `${agent.provider} · ${extractAgentModel(agent) ?? "Model not reported"}`);
+      return [...new Set(labels)];
+    }),
+  );
+  return models.map((model) => (
+    <InfoRow
+      key={model}
+      icon={ThemedBot}
+      value={model}
+      testID="hover-card-workspace-model"
+      multiline
+    />
+  ));
 }
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
@@ -159,15 +197,17 @@ function InfoRow({
   icon: Icon,
   value,
   testID,
+  multiline = false,
 }: {
   icon: CardInfoIcon;
   value: string;
   testID: string;
+  multiline?: boolean;
 }) {
   return (
     <View style={styles.cardInfoRow}>
       <Icon size={12} uniProps={foregroundMutedColorMapping} />
-      <Text style={styles.cardInfoText} numberOfLines={1} testID={testID}>
+      <Text style={styles.cardInfoText} numberOfLines={multiline ? undefined : 1} testID={testID}>
         {value}
       </Text>
     </View>

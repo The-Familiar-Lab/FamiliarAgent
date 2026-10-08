@@ -12,7 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
-export type AssistantForkTarget = "tab" | "workspace";
+export type AssistantForkTarget = "tab" | "workspace" | "host";
 
 interface AssistantForkMenuProps {
   onFork: (target: AssistantForkTarget) => Promise<void> | void;
@@ -117,6 +117,16 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
           testID={`${testID}-new-workspace`}
         >
           {t("message.actions.forkInNewWorkspace")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          closeOnSelect={false}
+          disabled={isLocked && pendingTarget !== "host"}
+          leading={forkIcon}
+          onSelect={handleSelect("host")}
+          status={pendingTarget === "host" ? "pending" : undefined}
+          testID={`${testID}-other-host`}
+        >
+          {t("message.actions.forkOnAnotherHost")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -20,7 +20,9 @@ export function validateDraftSubmission(input: {
     selectedProvider: string | null;
     isModelLoading: boolean;
     effectiveModelId: string | null;
-    availableModels: unknown[];
+    availableModels: Parameters<
+      typeof resolveSubmissionReadiness
+    >[0]["selection"]["availableModels"];
   };
   autoSubmitConfig: WorkspaceDraftAutoSubmitConfig | null;
   workspaceDirectory: string | null;

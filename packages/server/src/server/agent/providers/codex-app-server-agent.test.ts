@@ -1902,6 +1902,95 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("reinitializes only a verified unstarted Codex thread with its existing configuration", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const readHistory = vi.fn(() => Promise.reject(new Error("list_turns is not supported yet")));
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () =>
+        Promise.reject(new Error("no rollout found for thread id unstarted-thread")),
+      "thread/start": (params) => {
+        requests.push({ method: "thread/start", params });
+        return { thread: { id: "replacement-thread" } };
+      },
+      "thread/read": readHistory,
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const mcpServers = {
+      familiar_context: {
+        type: "stdio" as const,
+        command: "/fixture/familiar",
+        args: ["context", "mcp", "--session", "logical-A"],
+      },
+    };
+    const session = await provider.resumeSession(
+      { sessionId: "unstarted-thread", metadata: { emptyThread: true } },
+      {
+        cwd: "/fixture/project",
+        model: "gpt-5.4",
+        thinkingOptionId: "high",
+        systemPrompt: "Keep the shared task",
+        mcpServers,
+      },
+      undefined,
+      { allowEmptyThreadRecovery: true },
+    );
+    try {
+      expect((await session.getRuntimeInfo()).sessionId).toBe("replacement-thread");
+      expect(session.describePersistence()).toMatchObject({
+        sessionId: "replacement-thread",
+        metadata: { emptyThread: true, systemPrompt: "Keep the shared task", mcpServers },
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0].params).toMatchObject({
+        cwd: "/fixture/project",
+        model: "gpt-5.4",
+        developerInstructions: "Keep the shared task",
+      });
+      const history = [];
+      for await (const event of session.streamHistory()) history.push(event);
+      expect(history).toEqual([]);
+      expect(readHistory).not.toHaveBeenCalled();
+      session.prepareForTurn?.();
+      expect(session.describePersistence()?.metadata?.emptyThread).toBe(false);
+    } finally {
+      await session.close();
+    }
+    appServer.assertNoErrors();
+  });
+
+  test.each([
+    {
+      marker: undefined,
+      allowed: true,
+      message: "no rollout found for thread id protected-thread",
+    },
+    { marker: false, allowed: true, message: "no rollout found for thread id protected-thread" },
+    { marker: true, allowed: false, message: "no rollout found for thread id protected-thread" },
+    { marker: true, allowed: true, message: "connection failed" },
+    { marker: true, allowed: true, message: "no rollout found for thread id another-thread" },
+  ])(
+    "does not replace unknown, used, unauthorized or unrelated failed threads: %j",
+    async ({ marker, allowed, message }) => {
+      const start = vi.fn(() => ({ thread: { id: "must-not-be-created" } }));
+      const appServer = createFakeCodexAppServer({
+        "thread/resume": () => Promise.reject(new Error(message)),
+        "thread/start": start,
+      });
+      const provider = createProviderWithFakeAppServer(appServer);
+      await expect(
+        provider.resumeSession(
+          { sessionId: "protected-thread", metadata: { emptyThread: marker } },
+          undefined,
+          undefined,
+          { allowEmptyThreadRecovery: allowed },
+        ),
+      ).rejects.toThrow(message);
+      expect(start).not.toHaveBeenCalled();
+      appServer.assertNoErrors();
+    },
+  );
+
   test("closes Codex app-server when archived history hydration fails", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/resume": () =>

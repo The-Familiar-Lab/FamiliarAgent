@@ -716,6 +716,7 @@ it("binds imported getters to each originating installation across delayed callb
   const hostRuntime = (installation: string): PluginClientRuntime => ({
     ...runtime,
     hosts: {
+      invokePluginRpc: async () => ({}),
       getSnapshot: () => [],
       subscribe: () => () => {},
       getPaseoClient(serverId) {
@@ -742,6 +743,50 @@ it("binds imported getters to each originating installation across delayed callb
     "second/entry-host",
     "first/target-host",
     "second/target-host",
+  ]);
+  await first.cleanup();
+  await second.cleanup();
+});
+
+it("scopes cross-host RPC imports to the evaluated plugin and installation", async () => {
+  const calls: unknown[][] = [];
+  const hostRuntime = (installation: string): PluginClientRuntime => ({
+    ...runtime,
+    hosts: {
+      getSnapshot: () => [],
+      subscribe: () => () => {},
+      getPaseoClient: () => runtime.paseo,
+      invokePluginRpc: async (...args) => {
+        calls.push([installation, ...args]);
+        return { accepted: true };
+      },
+    },
+  });
+  const source = bundle(`
+    const { invokeHostRpc } = require("@getpaseo/plugin/client");
+    plugin.addCommandCenterItem({ id: "read", title: "Read", icon: "Server", context: "global",
+      onSelect: async () => { await Promise.resolve(); await invokeHostRpc("remote", "history.read", { id: "one", pluginId: "cannot-override-scope" }); }
+    });
+  `);
+  const first = runPluginClientBundle("familiar-workspace", source, hostRuntime("first"));
+  const second = runPluginClientBundle("another-plugin", source, hostRuntime("second"));
+  await first.commandCenterItems[0].onSelect({} as never);
+  await second.commandCenterItems[0].onSelect({} as never);
+  expect(calls).toEqual([
+    [
+      "first",
+      "remote",
+      "familiar-workspace",
+      "history.read",
+      { id: "one", pluginId: "cannot-override-scope" },
+    ],
+    [
+      "second",
+      "remote",
+      "another-plugin",
+      "history.read",
+      { id: "one", pluginId: "cannot-override-scope" },
+    ],
   ]);
   await first.cleanup();
   await second.cleanup();

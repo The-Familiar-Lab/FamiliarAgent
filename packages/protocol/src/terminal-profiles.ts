@@ -27,6 +27,12 @@ export const DEFAULT_TERMINAL_PROFILES: readonly TerminalProfile[] = [
     icon: "opencode",
   },
   { id: "pi", name: "Pi", command: "pi", args: [PROMPT_SENTINEL], icon: "pi" },
+  // Native tools own their UI, configuration and session lifecycle. These launch
+  // installed commands without injecting a prompt or changing their global setup.
+  { id: "aider", name: "Aider", command: "aider" },
+  { id: "goose", name: "Goose", command: "goose", args: ["session"] },
+  { id: "openrig", name: "OpenRig", command: "rig", args: ["tui"] },
+  { id: "claude-squad", name: "Claude Squad", command: "cs" },
 ];
 
 export interface SubstitutableCommand {

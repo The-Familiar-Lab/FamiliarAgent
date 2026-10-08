@@ -451,6 +451,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     },
     usageSession: inner.usageSession?.bind(inner),
     run: (prompt, options) => inner.run(prompt, options),
+    prepareForTurn: inner.prepareForTurn?.bind(inner),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
     steerActiveTurn: inner.steerActiveTurn?.bind(inner),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),

@@ -1,3 +1,5 @@
+import { mediaKind } from "./desktop-stream";
+import { MediaPreview } from "./media-preview";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -219,7 +221,24 @@ function FilePreviewBody({
   );
 }
 
-export function FilePane({
+export function FilePane(props: {
+  serverId: string;
+  workspaceRoot: string;
+  location: WorkspaceFileLocation;
+  navigationRevision: number;
+}) {
+  if (mediaKind(props.location.path))
+    return (
+      <MediaPreview
+        serverId={props.serverId}
+        workspaceRoot={props.workspaceRoot}
+        path={props.location.path}
+      />
+    );
+  return <DocumentFilePane {...props} />;
+}
+
+function DocumentFilePane({
   serverId,
   workspaceRoot,
   location,

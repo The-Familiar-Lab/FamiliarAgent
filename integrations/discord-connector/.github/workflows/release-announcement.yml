@@ -1,0 +1,34 @@
+name: Discord release announcement
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-release-announcement-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged release
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tagged commit
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: echo "RELEASE_SHA=$(git rev-list -n 1 "$RELEASE_TAG")" >> "$GITHUB_ENV"
+
+      - name: Announce version tag
+        env:
+          DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: node scripts/release-announcement.mjs

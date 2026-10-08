@@ -1,5 +1,21 @@
 # Changelog
 
+## FamiliarAgent 0.12.0 — 2026-10-08
+
+First FamiliarAgent integration layer on the pinned Paseo 0.11.1 baseline. Entries below this section retain the upstream Paseo history and attribution.
+
+- Added Familiar Hub with an all-server view of projects, sessions, tools, files and supported external history sources.
+- Added logical session switching, shared memory and context/history MCP, source-reference forks, optional Git worktree isolation and a linked-session banner in native chats.
+- Added original-history discovery with on-demand source reading, search and hide/restore; ChatGPT history requires official export JSON.
+- Added supported terminal/web launch connections, external desktop-app launching, explicit Skills/MCP mappings and optional Discord logical-session routing.
+- Added user-scoped SSH setup, consistent Mac/Linux data paths, guarded runtime updates, remote file/media access and selected-profile SSH port preservation.
+- Added bounded code-level verification and a FamiliarAgent-specific CI workflow. Source history replaces accumulated application backup copies.
+
+- Fixed restart recovery of explicitly unstarted Codex sessions using the actual durable registry, retaining the logical identity and launch configuration. Unknown or used missing histories remain errors.
+- Avoided native provider calls when reading an already verified empty history boundary.
+
+Verified the installed macOS app and Ubuntu runtime, including the Hub fork action and model/thinking configuration, plus 906 local tests, types, lint and daemon transports. Catalog entries do not imply complete interoperability with every external harness feature; see the [Hub guide](docs/familiar-hub.md) and [development guide](docs/familiar-development.md).
+
 ## 0.11.1 - 2026-10-07
 
 ### Added

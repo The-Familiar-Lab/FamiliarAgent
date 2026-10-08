@@ -60,10 +60,20 @@ export interface PluginHostSummary {
   readonly serverId: string;
   readonly label: string;
   readonly status: "idle" | "connecting" | "online" | "offline" | "error";
+  /** Reachable SSH address when configured; never contains connection credentials. */
+  readonly connection?: string;
+  /** The configured profile has a local socket, pipe, or loopback TCP endpoint. */
+  readonly isLocal?: boolean;
 }
 /** Live configured hosts. Supplied by the app's client bundle loader. */
 export declare function useHosts(): readonly PluginHostSummary[];
 /** Borrow an online host's API under this installation's lifetime. */
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
+/** Call this same plugin on another configured, connected server. */
+export declare function invokeHostRpc(
+  serverId: string,
+  method: string,
+  input: unknown,
+): Promise<unknown>;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */
 export declare function openExternalUrl(url: string): Promise<void>;

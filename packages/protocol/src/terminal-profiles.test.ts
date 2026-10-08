@@ -111,8 +111,8 @@ describe("resolveTerminalProfiles", () => {
     expect(claude?.icon).toBe("claude");
   });
 
-  it("every default profile takes a prompt, and drops the arg entirely without one", () => {
-    for (const profile of DEFAULT_TERMINAL_PROFILES) {
+  it("prompt-taking default profiles drop the prompt arg entirely without one", () => {
+    for (const profile of DEFAULT_TERMINAL_PROFILES.filter(profileTakesPrompt)) {
       expect(profileTakesPrompt(profile)).toBe(true);
       // No prompt has to mean no argv entry at all: a bare positional would be
       // an empty argument, and a bare `--prompt=` is not the same as omitting it.

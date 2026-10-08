@@ -5,6 +5,7 @@ import { createDaemonCommand } from "./commands/daemon/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
 import { createPluginCommand } from "./commands/plugin/index.js";
+import { createContextCommand } from "./commands/context/mcp.js";
 import { createProjectCommand } from "./commands/project/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
@@ -130,6 +131,7 @@ export function createCli(): Command {
   // Daemon commands
   program.addCommand(createDaemonCommand());
   program.addCommand(createHubCommand());
+  program.addCommand(createContextCommand());
 
   // Chat commands
 

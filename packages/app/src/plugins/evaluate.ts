@@ -218,7 +218,7 @@ export function runPluginClientBundle(
       surfaceIds.add(normalizedId);
       return register(
         collector.surfaces,
-        { id: normalizedId, title, Component: contribution.Component },
+        { id: normalizedId, title, Component: contribution.Component, scope: contribution.scope },
         () => surfaceIds.delete(normalizedId),
       );
     },
@@ -448,6 +448,8 @@ export function runPluginClientBundle(
         useSettings,
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
+        invokeHostRpc: (serverId: string, method: string, input: unknown) =>
+          runtime.hosts.invokePluginRpc(serverId, id, method, input),
         useHosts: () =>
           React.useSyncExternalStore(
             runtime.hosts.subscribe,

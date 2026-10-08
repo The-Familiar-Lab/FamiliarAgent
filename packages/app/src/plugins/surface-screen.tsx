@@ -190,7 +190,7 @@ export function PluginSurfaceScreen() {
   const headerRight = useMemo(
     () => (
       <>
-        {identity ? (
+        {identity && surface?.scope !== "fleet" ? (
           <PluginHostFilter
             serverId={serverId}
             pluginId={pluginId}
@@ -211,7 +211,7 @@ export function PluginSurfaceScreen() {
         </HeaderToggleButton>
       </>
     ),
-    [close, contributionServerIds, identity, params, pluginId, serverId],
+    [close, contributionServerIds, identity, params, pluginId, serverId, surface?.scope],
   );
 
   return (

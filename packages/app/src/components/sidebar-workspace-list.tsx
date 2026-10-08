@@ -875,6 +875,10 @@ function ProjectHeaderRow({
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
+  const hosts = useHosts();
+  const hostNames = [...new Set(project.hosts.map((host) => host.serverId))]
+    .map((serverId) => hosts.find((host) => host.serverId === serverId)?.label?.trim() || serverId)
+    .join(" · ");
   const settingsTarget = project.hosts[0] ?? null;
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
@@ -957,6 +961,14 @@ function ProjectHeaderRow({
         <View style={styles.projectTitleGroup}>
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
+          </Text>
+          <Text
+            style={styles.projectHosts}
+            numberOfLines={1}
+            accessibilityLabel={hostNames}
+            testID={`project-hosts-${project.viewKey}`}
+          >
+            {hostNames}
           </Text>
         </View>
       </View>
@@ -2605,6 +2617,13 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     flex: 1,
     minWidth: 0,
+  },
+  projectHosts: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginLeft: "auto",
+    maxWidth: "55%",
+    flexShrink: 1,
   },
   projectTitle: {
     color: theme.colors.foregroundMuted,

@@ -25,23 +25,23 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
   shimPath: string;
 } {
   const root = mkdtempSync(join(tmpdir(), "paseo-cli-shim-test-"));
-  const appPath = join(root, "Paseo.app");
+  const appPath = join(root, "FamiliarAgent.app");
   const contentsPath = join(appPath, "Contents");
   const resourcesPath = join(contentsPath, "Resources");
-  const shimPath = join(resourcesPath, "bin", "paseo");
-  const mainPath = join(contentsPath, "MacOS", "Paseo");
+  const shimPath = join(resourcesPath, "bin", "familiar");
+  const mainPath = join(contentsPath, "MacOS", "FamiliarAgent");
   const helperPath = join(
     contentsPath,
     "Frameworks",
-    "Paseo Helper.app",
+    "FamiliarAgent Helper.app",
     "Contents",
     "MacOS",
-    "Paseo Helper",
+    "FamiliarAgent Helper",
   );
 
   mkdirSync(dirname(shimPath), { recursive: true });
   mkdirSync(dirname(mainPath), { recursive: true });
-  copyFileSync(join(packageRoot, "bin", "paseo"), shimPath);
+  copyFileSync(join(packageRoot, "bin", "familiar"), shimPath);
   chmodSync(shimPath, 0o755);
 
   writeExecutable(mainPath, "#!/bin/sh\necho main-executable\n");
@@ -54,6 +54,7 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
         "#!/bin/sh",
         'printf "helper env=%s/%s cli=%s\\n" "$ELECTRON_RUN_AS_NODE" "$PASEO_NODE_ENV" "$PASEO_CLI"',
         'printf "args=%s\\n" "$*"',
+        'printf "state=%s\\n" "$PASEO_HOME"',
         "",
       ].join("\n"),
     );
@@ -119,11 +120,11 @@ describe("desktop packaging", () => {
     expect(runtimeTrace).toContain('"packages/server/dist/server/skills/**"');
   });
 
-  it("registers Paseo agent links with the operating system", () => {
+  it("registers FamiliarAgent agent links with the operating system", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
-    expect(config).toContain("name: Paseo agent link");
-    expect(config).toContain("- paseo");
+    expect(config).toContain("name: FamiliarAgent agent link");
+    expect(config).toContain("- familiaragent");
   });
 
   // electron-builder packs production dependencies declared in package.json into
@@ -170,8 +171,38 @@ describe("desktop packaging", () => {
       const result = spawnSync(bundle.shimPath, ["--version"], { encoding: "utf8" });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Bundled Paseo Helper executable not found");
+      expect(result.stderr).toContain("Bundled FamiliarAgent Helper executable not found");
       expect(result.stdout).not.toContain("main-executable");
+    } finally {
+      rmSync(bundle.root, { recursive: true, force: true });
+    }
+  });
+
+  it("selects the uniform state path while preserving existing and explicit homes", () => {
+    if (process.platform === "win32") return;
+    const bundle = createFakeMacBundle({ includeHelper: true });
+    const env = { ...process.env, HOME: bundle.root, PASEO_HOME: "" };
+    try {
+      expect(spawnSync(bundle.shimPath, ["--version"], { encoding: "utf8", env }).stdout).toContain(
+        `state=${bundle.root}/.local/share/familiaragent/state`,
+      );
+      const legacy = join(bundle.root, "Library", "Application Support", "FamiliarAgent", "daemon");
+      mkdirSync(legacy, { recursive: true });
+      expect(spawnSync(bundle.shimPath, ["--version"], { encoding: "utf8", env }).stdout).toContain(
+        `state=${legacy}`,
+      );
+      mkdirSync(join(bundle.root, ".local", "share", "familiaragent", "state"), {
+        recursive: true,
+      });
+      expect(spawnSync(bundle.shimPath, ["--version"], { encoding: "utf8", env }).stdout).toContain(
+        `state=${bundle.root}/.local/share/familiaragent/state`,
+      );
+      expect(
+        spawnSync(bundle.shimPath, ["--version"], {
+          encoding: "utf8",
+          env: { ...env, PASEO_HOME: "/explicit/home" },
+        }).stdout,
+      ).toContain("state=/explicit/home");
     } finally {
       rmSync(bundle.root, { recursive: true, force: true });
     }

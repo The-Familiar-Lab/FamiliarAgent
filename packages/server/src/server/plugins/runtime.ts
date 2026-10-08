@@ -7,7 +7,7 @@ import {
 import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { stat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -352,7 +352,22 @@ export class PluginRuntime {
       throw new Error(`Built-in plugin ${input.id} has manifest ID ${manifest.id}`);
     }
     assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
-    const bundles = await compilePlugin(await resolveEntryPaths(directory));
+    // Packaged built-ins are compiled at build time; development directories keep source loading.
+    const precompiled = await readFile(path.join(directory, "compiled.json"), "utf8").catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      },
+    );
+    const bundles: { serverBundle: string | null; clientBundle: string | null } = precompiled
+      ? JSON.parse(precompiled)
+      : await compilePlugin(await resolveEntryPaths(directory));
+    if (
+      !bundles ||
+      typeof bundles.serverBundle !== "string" ||
+      (bundles.clientBundle !== null && typeof bundles.clientBundle !== "string")
+    )
+      throw new Error(`Invalid built-in plugin bundle: ${input.id}`);
     if (!bundles.serverBundle) throw new Error(`Built-in plugin ${input.id} needs a server entry`);
     const loaded = await this.launchPlugin({
       pluginId: input.id,

@@ -1,3 +1,4 @@
+import { selectDownloadRange } from "./file-download/range.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
@@ -738,6 +739,7 @@ export async function createPaseoDaemon(
   const fixedAllowedOrigins = [
     // Packaged desktop renderers use the custom paseo:// protocol scheme.
     "paseo://app",
+    "familiaragent://app",
     // For TCP, add localhost variants
     ...(listenTarget.type === "tcp"
       ? [
@@ -822,7 +824,10 @@ export async function createPaseoDaemon(
       return;
     }
 
-    const entry = downloadTokenStore.consumeToken(token);
+    const preview = req.query.preview === "1";
+    const entry = preview
+      ? downloadTokenStore.peekToken(token)
+      : downloadTokenStore.consumeToken(token);
     if (!entry) {
       res.status(403).json({ error: "Invalid or expired token" });
       return;
@@ -837,11 +842,31 @@ export async function createPaseoDaemon(
         return;
       }
 
+      if (preview && !/^(audio|video)\//u.test(entry.mimeType)) {
+        res.status(415).json({ error: "Unsupported media type" });
+        return;
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Accept-Ranges", "bytes");
       res.setHeader("Content-Type", entry.mimeType);
-      res.setHeader("Content-Disposition", formatAttachmentContentDisposition(entry.fileName));
+      res.setHeader(
+        "Content-Disposition",
+        preview ? "inline" : formatAttachmentContentDisposition(entry.fileName),
+      );
       res.setHeader("Content-Length", fileStats.size.toString());
 
-      const stream = fileHandle.createReadStream();
+      const selectedRange = selectDownloadRange(req, res, fileStats.size);
+      if (selectedRange === false) return;
+      const range = selectedRange ?? undefined;
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      const stream = fileHandle.createReadStream(
+        range ? { start: range.start, end: range.end } : {},
+      );
+      res.on("close", () => stream.destroy());
       fileHandle = null;
       stream.on("error", (err) => {
         logger.error({ err }, "Failed to stream download");
@@ -1384,6 +1409,8 @@ export async function createPaseoDaemon(
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
+    familiarWorkspace: (operation, input) =>
+      pluginRuntime.invokePluginRpc("familiar-workspace", `space.${operation}`, input),
     agentManager,
     agentStorage,
     terminalManager,

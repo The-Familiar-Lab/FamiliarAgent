@@ -328,6 +328,7 @@ export const ko: TranslationResources = {
       copyCode: "코드 복사",
       copyTurn: "턴 복사",
       copyMessage: "메시지 복사",
+      forkOnAnotherHost: "다른 서버로 대화 분기…",
       forkMenu: "여기에서 채팅 분기",
       forkInNewTab: "새 탭으로 분기",
       forkInNewWorkspace: "새 워크스페이스로 분기",
@@ -1225,7 +1226,7 @@ export const ko: TranslationResources = {
       discord: "Discord",
       github: "GitHub 이슈 만들기",
       whatsNew: "새로운 소식",
-      appName: "Paseo",
+      appName: "FamiliarAgent",
     },
     sections: {
       sessions: "기록",
@@ -1766,7 +1767,8 @@ export const ko: TranslationResources = {
     },
     remoteSsh: {
       title: "원격 SSH",
-      helper: "원격 호스트에서 실행 중인 Paseo 데몬에 연결합니다.",
+      helper:
+        "SSH 별칭 또는 user@host를 입력하세요. Linux·macOS 서버의 사용자 영역에 FamiliarAgent를 자동 설치합니다. 기존 SSH 키와 확인된 호스트를 사용하며 첫 설치에는 몇 분이 걸릴 수 있습니다.",
       fields: {
         target: "SSH 호스트",
         password: "데몬 비밀번호",

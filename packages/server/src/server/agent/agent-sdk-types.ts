@@ -644,6 +644,8 @@ export interface AgentResumeSessionOptions {
   purpose?: AgentResumePurpose;
   /** See AgentCreateSessionOptions.configuredModelIds. */
   configuredModelIds?: readonly string[];
+  /** Manager-verified empty local history; never infer this from absent provider history. */
+  allowEmptyThreadRecovery?: boolean;
 }
 
 /**
@@ -671,6 +673,8 @@ export interface AgentSession {
    * replay them at their original timestamps; restored sessions omit old rows. */
   readonly initialTimeline?: ImportedTimelineEntry[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
+  /** Synchronously invalidate recovery metadata before the manager persists it and starts work. */
+  prepareForTurn?(): void;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;

@@ -323,7 +323,7 @@ export function resolveSubmissionReadiness(input: {
   selection: {
     provider: AgentProvider | string | null;
     modelId: string;
-    availableModels: readonly unknown[];
+    availableModels: readonly Pick<AgentModelDefinition, "id" | "aliases" | "isSelectable">[];
     isModelLoading: boolean;
   };
   autoSubmitConfig: { provider: string; model: string | null } | null;
@@ -345,6 +345,18 @@ export function resolveSubmissionReadiness(input: {
   const hasSelectedModel = Boolean(input.autoSubmitConfig?.model ?? input.selection.modelId);
   if (!hasSelectedModel && input.selection.availableModels.length > 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
+  }
+  const selectedModel = input.autoSubmitConfig?.model ?? input.selection.modelId;
+  if (
+    selectedModel &&
+    input.selection.availableModels.length > 0 &&
+    !input.selection.availableModels.some(
+      (model) =>
+        model.isSelectable !== false &&
+        (model.id === selectedModel || model.aliases?.includes(selectedModel)),
+    )
+  ) {
+    return { ok: false, reason: i18n.t("providerSelection.selectModel") };
   }
   if (!input.workspaceDirectory) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound") };

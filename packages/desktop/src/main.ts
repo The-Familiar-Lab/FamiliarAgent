@@ -1,3 +1,6 @@
+import { remoteWebForwards } from "./features/familiar/web-forward.js";
+import { discordConnection } from "./features/familiar/discord.js";
+import { handleFileStream } from "./features/familiar/file-stream.js";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 import log from "electron-log/main";
@@ -106,12 +109,14 @@ import {
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import { familiarStateBeforeMigration, prepareFamiliarLayout } from "./features/familiar/paths.js";
+import { ensureStableCli } from "./integrations/cli-install/install.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
-const APP_SCHEME = "paseo";
+const APP_SCHEME = "familiaragent";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
-const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
+const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "FamiliarAgent";
 const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   platform: process.platform,
   override: process.env.PASEO_DESKTOP_WINDOW_CONTROLS,
@@ -131,6 +136,7 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
+process.env.PASEO_RELAY_ENABLED ??= "false";
 log.info("[desktop] app startup", {
   version: app.getVersion(),
   platform: process.platform,
@@ -328,6 +334,29 @@ if (forcedUserDataDir) {
   } catch {
     devWorktreeName = null;
   }
+}
+
+if (
+  !forcedUserDataDir &&
+  !devWorktreeName &&
+  !process.env.PASEO_HOME &&
+  APP_NAME === "FamiliarAgent"
+) {
+  const legacyDesktop = app.getPath("userData");
+  // CLI passthrough can attach to the old daemon before the first upgraded GUI launch.
+  if (parsePassthroughCliArgsFromArgv(process.argv)) {
+    process.env.PASEO_HOME ??= familiarStateBeforeMigration(legacyDesktop);
+  } else {
+    const layout = prepareFamiliarLayout({ legacyDesktop });
+    app.setPath("userData", layout.paths.desktop);
+    process.env.PASEO_HOME ??= layout.paths.state;
+    if (layout.deferred)
+      log.info("[familiar] location migration deferred until the previous app and daemon stop");
+    if (layout.migrated)
+      log.info("[familiar] data relocated with compatibility aliases", { root: layout.paths.root });
+  }
+} else {
+  process.env.PASEO_HOME ??= path.join(app.getPath("userData"), "daemon");
 }
 
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
@@ -556,7 +585,7 @@ ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown) =>
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
   },
 ]);
 
@@ -925,9 +954,14 @@ async function bootstrap(): Promise<void> {
 
   await app.whenReady();
 
+  if (app.isPackaged && !forcedUserDataDir && APP_NAME === "FamiliarAgent") {
+    await ensureStableCli();
+  }
+
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {
     const { pathname, search, hash } = new URL(request.url);
+    if (pathname.startsWith("/_familiar/files/")) return handleFileStream(request);
     const decodedPath = decodeURIComponent(pathname);
 
     // Chromium can occasionally request the exported entrypoint directly.
@@ -1028,14 +1062,19 @@ function showDaemonShutdownDialog(): void {
 
 const quitLifecycle = createQuitLifecycle({
   app,
-  closeTransportSessions: closeAllTransportSessions,
-  stopDesktopManagedDaemonIfNeeded: () =>
-    stopDesktopManagedDaemonOnQuitIfNeeded({
+  closeTransportSessions: () => {
+    closeAllTransportSessions();
+    remoteWebForwards.closeAll();
+  },
+  stopDesktopManagedDaemonIfNeeded: async () => {
+    await discordConnection.stop();
+    return stopDesktopManagedDaemonOnQuitIfNeeded({
       settingsStore: getDesktopSettingsStore(),
       isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
       stopDaemon: () => stopDesktopDaemonViaCli("quit"),
       showShutdownFeedback: showDaemonShutdownDialog,
-    }),
+    });
+  },
   installAppUpdateOnQuit: async (signal) => {
     const settings = await getDesktopSettingsStore().get();
     return installAppUpdateOnQuit({

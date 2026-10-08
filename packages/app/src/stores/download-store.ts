@@ -1,3 +1,6 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { desktopFileStreamUrl } from "@/file-pane/desktop-stream";
 import { create } from "zustand";
 import { File as FSFile, Paths } from "expo-file-system";
 import * as LegacyFileSystem from "expo-file-system/legacy";
@@ -89,6 +92,21 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
         throw new Error(tokenResponse.error ?? i18n.t("downloads.requestTokenFailed"));
       }
 
+      const desktopUrl = await desktopFileStreamUrl(
+        daemonProfile,
+        tokenResponse.token,
+        false,
+        getHostRuntimeStore().getSnapshot(serverId)?.activeConnectionId,
+      );
+      if (desktopUrl) {
+        const result = await invokeDesktopCommand<{ saved: boolean }>("familiar_save_file", {
+          url: desktopUrl,
+          fileName: tokenResponse.fileName ?? fileName,
+        });
+        if (result.saved) get().completeDownload(id);
+        else get().dismissDownload(id);
+        return;
+      }
       const downloadTarget = resolveDaemonDownloadTarget(daemonProfile);
       if (!downloadTarget.baseUrl) {
         throw new Error(i18n.t("downloads.hostUnavailable"));

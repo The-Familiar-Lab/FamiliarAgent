@@ -432,6 +432,25 @@ describe("combined model selector data", () => {
       await i18n.changeLanguage("en");
     }
   });
+
+  it("blocks a model missing from the selected host before submitting a draft", () => {
+    expect(
+      resolveSubmissionReadiness({
+        text: "fork test",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
+          provider: "codex",
+          modelId: "other-host-only",
+          availableModels: [codexModel],
+          isModelLoading: false,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: true,
+      }),
+    ).toEqual({ ok: false, reason: "Select model" });
+  });
 });
 
 function getAllModelLabels(providers: ReturnType<typeof buildSelectableProviderSelectorProviders>) {

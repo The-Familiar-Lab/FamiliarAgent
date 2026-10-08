@@ -96,6 +96,36 @@ describe("daemon E2E", () => {
       60000,
     );
 
+    test("streams reusable media ranges and rejects invalid ranges", async () => {
+      const cwd = tmpCwd();
+      try {
+        const bytes = Buffer.from("0123456789");
+        writeFileSync(path.join(cwd, "clip.mp4"), bytes);
+        await ctx.client.createAgent({ provider: "codex", cwd, title: "Media transport test" });
+        const token = await ctx.client.requestDownloadToken(cwd, "clip.mp4");
+        expect(token.error).toBeNull();
+        const url = `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=${token.token}&preview=1`;
+        const first = await fetch(url, { headers: { Range: "bytes=2-5" } });
+        expect(first.status).toBe(206);
+        expect(first.headers.get("content-range")).toBe("bytes 2-5/10");
+        expect(await first.text()).toBe("2345");
+        const seek = await fetch(url, { headers: { Range: "bytes=-2" } });
+        expect(await seek.text()).toBe("89");
+        const head = await fetch(url, { method: "HEAD" });
+        expect(head.status).toBe(200);
+        expect(head.headers.get("content-length")).toBe("10");
+        const invalid = await fetch(url, { headers: { Range: "bytes=100-200" } });
+        expect(invalid.status).toBe(416);
+        expect(invalid.headers.get("content-length")).toBe("0");
+        expect(await invalid.text()).toBe("");
+        const download = await fetch(url.replace("&preview=1", ""));
+        expect(Buffer.from(await download.arrayBuffer())).toEqual(bytes);
+        expect((await fetch(url)).status).toBe(403);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }, 60000);
+
     test("rejects invalid token", async () => {
       const response = await fetch(
         `http://127.0.0.1:${ctx.daemon.port}/api/files/download?token=invalid-token`,

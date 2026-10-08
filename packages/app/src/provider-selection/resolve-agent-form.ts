@@ -285,7 +285,7 @@ function resolveModeId(input: {
   if (!provider) return "";
   return resolvePreferredModeId({
     initialModeId: initialValues?.modeId,
-    preferredModeId: providerPrefs?.mode,
+    preferredModeId: initialValues?.modeId === null ? undefined : providerPrefs?.mode,
     providerDef,
   });
 }
@@ -302,6 +302,9 @@ function resolveModelField(input: {
     input;
   if (userModified) return currentModel;
   if (!provider) return "";
+  // An explicit reset (for example a portable fork) uses this host's catalog,
+  // not a remembered model from a different machine or account.
+  if (initialValues?.model === null) return resolveDefaultModelId(availableModels);
   const initialModel = normalizeSelectedModelId(initialValues?.model);
   const preferredModel = normalizeSelectedModelId(providerPrefs?.model);
   // COMPAT(default-model-id): added in v0.7.2, remove after 2026-12-06.
@@ -311,17 +314,11 @@ function resolveModelField(input: {
       findModelByReference(availableModels, "default")?.id || resolveDefaultModelId(availableModels)
     );
   }
-  if (initialModel) {
-    return !availableModels
-      ? initialModel
-      : resolveCanonicalModelId(availableModels, initialModel) || initialModel;
-  }
-  if (preferredModel) {
-    return !availableModels
-      ? preferredModel
-      : resolveCanonicalModelId(availableModels, preferredModel) || preferredModel;
-  }
-  return "";
+  const requested = initialModel || preferredModel;
+  if (!requested || !availableModels?.length) return requested;
+  return (
+    resolveCanonicalModelId(availableModels, requested) || resolveDefaultModelId(availableModels)
+  );
 }
 
 function resolveThinkingOption(input: {
@@ -344,6 +341,7 @@ function resolveThinkingOption(input: {
   } = input;
   if (!provider) return "";
   if (userModified) return currentThinkingOptionId;
+  if (initialValues?.thinkingOptionId === null) return "";
   const initialThinkingOptionId =
     typeof initialValues?.thinkingOptionId === "string"
       ? initialValues.thinkingOptionId.trim()
@@ -532,7 +530,16 @@ function completeResolution(
     state.form,
     action.allowedProviderMap,
   );
-  const nextState = { ...state, resolution: { status: "completed" } as const };
+  // A loading catalog cannot settle destination defaults. Resolve again when
+  // that host supplies its models so reasoning controls are populated as well.
+  const waitingForModels =
+    resolved.provider !== null &&
+    action.allowedProviderMap.has(resolved.provider) &&
+    action.providerModelsByProvider.get(resolved.provider) == null;
+  const nextState = {
+    ...state,
+    resolution: { status: waitingForModels ? "pending" : "completed" } as AgentFormResolutionState,
+  };
   if (!hasFormStateChanged(state.form, resolved)) return nextState;
   return { ...nextState, form: resolved };
 }

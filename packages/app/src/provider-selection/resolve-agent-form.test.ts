@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   resolveAgentForm,
   resolveFormState,
-  resolveEffectiveModel,
   resolveThinkingOptionId,
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
@@ -791,7 +790,7 @@ describe("resolveFormState", () => {
   });
 });
 
-it("keeps the explicit model when a refreshed catalogue no longer lists it", () => {
+it("replaces a remembered model absent from the destination catalog with its default", () => {
   const resolved = resolveFormState(
     undefined,
     { provider: "codex", providerPreferences: { codex: { model: "gpt-6-astra" } } },
@@ -800,9 +799,55 @@ it("keeps the explicit model when a refreshed catalogue no longer lists it", () 
     makeState().form,
     codexProviderMap,
   );
-  expect(resolved.model).toBe("gpt-6-astra");
-  // Label/persistence lookup must not reinterpret the submitted ID as another model.
-  expect(resolveEffectiveModel(CODEX_MODELS, resolved.model)).toBeNull();
+  expect(resolved.model).toBe(CODEX_MODELS[0].id);
+  expect(resolved.thinkingOptionId).toBe("xhigh");
+});
+
+it("resolves portable fork controls after the destination catalog finishes loading", () => {
+  const input = {
+    type: "INPUTS_CHANGED" as const,
+    serverId: "ubuntu",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: false,
+    hasSnapshot: true,
+    initialValues: { provider: "codex", model: null, modeId: null, thinkingOptionId: null },
+    preferences: {
+      provider: "codex",
+      providerPreferences: {
+        codex: {
+          model: "mac-only-model",
+          mode: "full-access",
+          thinkingByModel: { [CODEX_MODELS[0].id]: "low" },
+        },
+      },
+    },
+    allowedProviderMap: codexProviderMap,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", null]]),
+  };
+  const loading = resolveAgentForm(makeState(), input);
+  expect(loading.resolution.status).toBe("pending");
+  const ready = resolveAgentForm(loading, {
+    ...input,
+    providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+  });
+  expect(ready.resolution.status).toBe("completed");
+  expect(ready.form).toEqual({
+    provider: "codex",
+    model: CODEX_MODELS[0].id,
+    modeId: "auto",
+    thinkingOptionId: "xhigh",
+  });
+  const edited = resolveAgentForm(ready, {
+    type: "SET_THINKING_OPTION_FROM_USER",
+    thinkingOptionId: "low",
+  });
+  expect(
+    resolveAgentForm(edited, {
+      ...input,
+      providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+    }).form.thinkingOptionId,
+  ).toBe("low");
 });
 
 describe("resolveAgentForm", () => {

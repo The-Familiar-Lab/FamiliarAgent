@@ -93,3 +93,20 @@ app.json
 
 # Heap snapshots dumped by --heapsnapshot-near-heap-limit; keep them for debugging.
 *.heapsnapshot
+
+packages/desktop/assets/familiar/runtime.tgz
+packages/desktop/assets/familiar/runtime.sha256
+
+packages/desktop/assets/familiar/discord.cjs
+
+# Generated FamiliarAgent bundles and local validation scratch space
+*.app/
+/work/
+/outputs/
+packages/desktop/runtime/
+/runtime.zip
+/FamiliarAgent-*.zip
+**/cli-client-id
+
+# Generated from locked Discord dependencies by build-remote.cjs.
+/packages/desktop/assets/familiar/THIRD-PARTY-DISCORD.txt

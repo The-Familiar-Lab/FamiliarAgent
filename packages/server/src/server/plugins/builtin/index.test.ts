@@ -132,3 +132,30 @@ test("directory, Git, and npm installs reject a built-in ID", async () => {
     await daemon.close();
   }
 }, 60_000);
+
+test("packaged built-ins start from precompiled bundles without compiling source at runtime", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "familiar-precompiled-"));
+  roots.push(root);
+  const directory = await fixture(root, "cached", true);
+  const bundles = await compilePlugin({
+    server: path.join(directory, "index.server.ts"),
+    client: path.join(directory, "index.client.tsx"),
+  });
+  await writeFile(path.join(directory, "compiled.json"), JSON.stringify(bundles));
+  await writeFile(path.join(directory, "index.server.ts"), "This intentionally cannot be compiled");
+  const daemon = await createTestPaseoDaemon({
+    daemonVersion: "0.11.1",
+    builtinPlugins: new BuiltinPluginLoader(root, ["cached"]),
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const catalog = await client.getPluginCatalog();
+    expect(catalog.find((item) => item.id === "cached")?.clientBundle).toContain(
+      "builtin-client-marker",
+    );
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 30000);

@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/kwonminki/ai-agent-discord-connector",
+  "commit": "3db8283442c0c67df4ac4f37d88f4f87e7604dcb",
+  "version": "2.0.2",
+  "license": "MIT",
+  "changes": [
+    "optional FamiliarAgent native-session bridge",
+    "bundled desktop stdin credential entry",
+    "focused regression tests"
+  ]
+}

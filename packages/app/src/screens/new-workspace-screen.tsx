@@ -36,6 +36,7 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
+import { validateDraftSubmission } from "@/composer/draft/workspace-tab-core";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
@@ -43,6 +44,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { LaunchControl } from "@/new-workspace-launch/launch-control";
+import { forkLaunchTarget } from "./new-workspace-fork-context";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
@@ -955,6 +957,15 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   if (!provider) {
     throw new Error(input.labels.selectModel);
   }
+  const validationError = validateDraftSubmission({
+    text,
+    allowsEmptyAutoSubmit: attachments.length > 0,
+    composerState,
+    autoSubmitConfig: null,
+    workspaceDirectory: cwd,
+    hasClient: true,
+  });
+  if (validationError) throw new Error(validationError);
   const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
     supportsForgeAttachments: input.supportsForgeSearch,
   });
@@ -1701,10 +1712,15 @@ export function NewWorkspaceScreen({
   // reads live from preferences so the async load can't race a frozen
   // initializer. Both go through `resolveLaunchTarget`, so a profile deleted
   // daemon-side falls back to chat rather than leaving a dead selection.
+  const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(null);
   const launchTarget = useMemo(
-    () => resolveLaunchTarget(manualLaunchTarget ?? formPreferences.launchTarget, terminalProfiles),
-    [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles],
+    () =>
+      resolveLaunchTarget(
+        forkLaunchTarget(manualLaunchTarget, formPreferences.launchTarget, !!forkDraftSetup),
+        terminalProfiles,
+      ),
+    [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles, forkDraftSetup],
   );
   const [terminalPromptText, setTerminalPromptText] = useState("");
   const {
@@ -1762,7 +1778,6 @@ export function NewWorkspaceScreen({
     projects: projectIconTargets,
   });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
-  const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
   const visibleDraftContextScopeKeys = useMemo(
     () => resolveVisibleDraftContextScopeKeys({ isDraftHandoffActive, draftContextScopeKey }),

@@ -1,8 +1,8 @@
 {
-  "name": "paseo",
-  "version": "0.11.1",
+  "name": "familiaragent",
+  "version": "0.12.0",
   "private": true,
-  "description": "Paseo: voice-controlled development environment for local AI coding agents",
+  "description": "FamiliarAgent: shared workspaces across agent tools, harnesses and machines",
   "keywords": [
     "development",
     "mcp",
@@ -10,7 +10,7 @@
     "voice",
     "voice-assistant"
   ],
-  "homepage": "https://paseo.sh",
+  "homepage": "https://github.com/The-Familiar-Lab/FamiliarAgent",
   "license": "Apache-2.0",
   "author": {
     "name": "Mohamed Boudra",
@@ -18,7 +18,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/getpaseo/paseo.git"
+    "url": "git+ssh://git@github.com/The-Familiar-Lab/FamiliarAgent.git"
   },
   "workspaces": [
     "plugins",
@@ -119,7 +119,9 @@
     "release:promote": "npm run release:check && npm run version:all:promote && npm run release:publish && npm run release:push",
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
-    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push"
+    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
+    "verify:familiar": "node scripts/verify-familiar.mjs",
+    "test:familiar:watch": "vitest --watch plugins/familiar-workspace packages/desktop/src/features/familiar packages/server/src/server/file-download --maxWorkers=2"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

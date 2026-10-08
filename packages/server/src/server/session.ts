@@ -6669,7 +6669,7 @@ export class Session {
           "Background snapshot refresh failed after workspace.create",
         );
       });
-    if (request.firstAgentContext) {
+    if (request.firstAgentContext && !explicitTitle) {
       const firstAgentContext = request.firstAgentContext;
       this.workspaceAutoName.scheduleForDirectory(
         {

@@ -1,3 +1,4 @@
+import { DiscordSection } from "./familiar/discord-section";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -49,35 +50,38 @@ export function IntegrationsSection() {
   );
   if (!showSection) return null;
   return (
-    <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>
-      <View style={settingsStyles.card}>
-        <View style={settingsStyles.row}>
-          <View style={settingsStyles.rowContent}>
-            <View style={styles.rowTitleRow}>
-              <Terminal size={theme.iconSize.md} color={theme.colors.foreground} />
-              <Text style={settingsStyles.rowTitle}>
-                {t("settings.integrations.commandLine.title")}
+    <>
+      <SettingsSection title={t("settings.integrations.title")} trailing={trailing}>
+        <View style={settingsStyles.card}>
+          <View style={settingsStyles.row}>
+            <View style={settingsStyles.rowContent}>
+              <View style={styles.rowTitleRow}>
+                <Terminal size={theme.iconSize.md} color={theme.colors.foreground} />
+                <Text style={settingsStyles.rowTitle}>
+                  {t("settings.integrations.commandLine.title")}
+                </Text>
+              </View>
+              <Text style={settingsStyles.rowHint}>
+                {t("settings.integrations.commandLine.description")}
               </Text>
             </View>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.integrations.commandLine.description")}
-            </Text>
+            {status?.installed ? (
+              <View style={styles.installedLabel}>
+                <Check size={14} color={theme.colors.foregroundMuted} />
+                <Text style={styles.mutedText}>{t("settings.integrations.actions.installed")}</Text>
+              </View>
+            ) : (
+              <Button variant="outline" size="sm" onPress={install} disabled={isInstalling}>
+                {isInstalling
+                  ? t("settings.integrations.actions.installing")
+                  : t("settings.integrations.actions.install")}
+              </Button>
+            )}
           </View>
-          {status?.installed ? (
-            <View style={styles.installedLabel}>
-              <Check size={14} color={theme.colors.foregroundMuted} />
-              <Text style={styles.mutedText}>{t("settings.integrations.actions.installed")}</Text>
-            </View>
-          ) : (
-            <Button variant="outline" size="sm" onPress={install} disabled={isInstalling}>
-              {isInstalling
-                ? t("settings.integrations.actions.installing")
-                : t("settings.integrations.actions.install")}
-            </Button>
-          )}
         </View>
-      </View>
-    </SettingsSection>
+      </SettingsSection>
+      <DiscordSection />
+    </>
   );
 }
 

@@ -1,3 +1,5 @@
+import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
+import type { LaunchTarget } from "@/new-workspace-launch/target";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 
 function isLikelyWindowsPath(path: string): boolean {
@@ -47,4 +49,23 @@ export function remapDraftCwdToWorkspace(input: {
   return [workspaceDirectory.replace(/[\\/]+$/, ""), ...relativePath.split("/")]
     .filter(Boolean)
     .join(separator);
+}
+
+export function portableForkSetup(setup: WorkspaceDraftTabSetup): WorkspaceDraftTabSetup {
+  return {
+    provider: setup.provider,
+    cwd: "",
+    modeId: null,
+    model: null,
+    thinkingOptionId: null,
+    featureValues: {},
+  };
+}
+
+export function forkLaunchTarget(
+  manual: LaunchTarget | null,
+  preferred: LaunchTarget | undefined,
+  hasFork: boolean,
+): LaunchTarget {
+  return manual ?? (hasFork ? { kind: "chat" } : (preferred ?? { kind: "chat" }));
 }

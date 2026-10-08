@@ -1,11 +1,11 @@
 npmRebuild: false
-appId: sh.paseo.desktop
-productName: Paseo
-executableName: Paseo
+appId: app.familiaragent.desktop
+productName: FamiliarAgent
+executableName: FamiliarAgent
 protocols:
-  - name: Paseo agent link
+  - name: FamiliarAgent agent link
     schemes:
-      - paseo
+      - familiaragent
 afterPack: ./scripts/after-pack.js
 afterSign: ./scripts/after-sign.js
 directories:
@@ -28,6 +28,16 @@ asarUnpack:
   - dist/daemon/node-entrypoint-runner.js
   - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
 extraResources:
+  - from: ../../LICENSE
+    to: licenses/Paseo-LICENSE.txt
+  - from: ../../NOTICE-FamiliarAgent.md
+    to: licenses/NOTICE-FamiliarAgent.md
+  - from: ../../UPSTREAM.json
+    to: licenses/UPSTREAM.json
+  - from: ../../integrations/discord-connector/LICENSE
+    to: licenses/Discord-Connector-LICENSE.txt
+  - from: assets/familiar
+    to: familiar
   # Preserve physical compiler inputs, including .d.ts files omitted from packaged node_modules.
   - from: ../server/dist/server/builtin-plugins
     to: builtin-plugins
@@ -35,22 +45,24 @@ extraResources:
     to: app-dist
   - from: assets/editor-targets
     to: editor-target-icons
-publish:
-  provider: github
-  owner: getpaseo
-  repo: paseo
+publish: null
 mac:
-  artifactName: "Paseo-${version}-${arch}.${ext}"
+  artifactName: "FamiliarAgent-${version}-${arch}.${ext}"
   minimumSystemVersion: "13.0.0"
   category: public.app-category.developer-tools
   icon: assets/icon.icns
-  hardenedRuntime: true
-  notarize: true
+  extendInfo:
+    NSDocumentsFolderUsageDescription: FamiliarAgent and the agent tools you start need access to the project folders you select in Documents.
+    NSDesktopFolderUsageDescription: FamiliarAgent opens the project folders you select on your Desktop.
+    NSDownloadsFolderUsageDescription: FamiliarAgent opens and saves files you select in Downloads.
+    NSLocalNetworkUsageDescription: FamiliarAgent connects to the SSH servers you add to share agent workspaces and files.
+  hardenedRuntime: false
+  notarize: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/familiar
+      to: bin/familiar
     - from: assets/icon.png
       to: icon.png
   target:
@@ -59,12 +71,12 @@ mac:
 linux:
   category: Development
   icon: assets
-  artifactName: "Paseo-${version}-${arch}.${ext}"
+  artifactName: "FamiliarAgent-${version}-${arch}.${ext}"
   maintainer: "Mohamed Boudra <hello@moboudra.com>"
-  vendor: "Paseo"
+  vendor: "FamiliarAgent"
   extraResources:
-    - from: bin/paseo
-      to: bin/paseo
+    - from: bin/familiar
+      to: bin/familiar
   target:
     - AppImage
     - deb
@@ -76,15 +88,15 @@ rpm:
   afterInstall: scripts/linux-sandbox/after-install.tpl
 appImage:
   # A nonempty argument list replaces builder's hardcoded --no-sandbox default.
-  executableArgs: ["--class=Paseo"]
+  executableArgs: ["--class=FamiliarAgent"]
   # Keep the AppImage filename stable across versions (no ${version}) so
   # electron-updater overwrites the file in place instead of renaming it to a new
   # versioned path. A rename orphans the old binary, breaks desktop shortcuts, and
   # dangles the ~/.local/bin/paseo CLI symlink, which points at $APPIMAGE. The
   # version stays discoverable via the release tag and the in-app version.
-  artifactName: "Paseo-${arch}.${ext}"
+  artifactName: "FamiliarAgent-${arch}.${ext}"
 win:
-  artifactName: "Paseo-Setup-${version}-${arch}.${ext}"
+  artifactName: "FamiliarAgent-Setup-${version}-${arch}.${ext}"
   icon: assets/icon.ico
   extraResources:
     - from: bin/paseo.cmd

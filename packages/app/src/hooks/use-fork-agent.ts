@@ -1,3 +1,4 @@
+import { portableForkSetup } from "@/screens/new-workspace-fork-context";
 import { useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import type {
@@ -178,16 +179,20 @@ export function useForkAgent(
       if (draftSetup) {
         useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
           draftId,
-          setup: draftSetup,
-          sourceDirectory,
+          setup: target === "host" ? portableForkSetup(draftSetup) : draftSetup,
+          sourceDirectory: target === "host" ? undefined : sourceDirectory,
         });
       }
       router.push(
         buildNewWorkspaceRoute({
-          serverId,
-          sourceDirectory,
-          displayName: agent.projectPlacement?.projectName,
-          projectId: agent.projectPlacement?.projectKey,
+          ...(target === "host"
+            ? {}
+            : {
+                serverId,
+                sourceDirectory,
+                displayName: agent.projectPlacement?.projectName,
+                projectId: agent.projectPlacement?.projectKey,
+              }),
           draftId,
         }),
       );

@@ -1341,7 +1341,9 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
   override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
     this.createdConfigs.push(config);
-    return new McpCapableTestAgentSession(config);
+    return new (class extends McpCapableTestAgentSession {
+      override readonly id = scenario === "empty" ? randomUUID() : handle.sessionId;
+    })(config);
   }
 
   override async resumeSession(
@@ -1641,6 +1643,283 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 }
 
 const logger = createTestLogger();
+
+test("retains lazy native creation metadata in the first snapshot and verifies empty reloads", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-lazy-empty-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const store = new RecordingTimelineStore();
+  const resumeOptions: Array<AgentResumeSessionOptions | undefined> = [];
+  const makeSession = (config: AgentSessionConfig): AgentSession => {
+    const session: AgentSession = new TestAgentSession(config);
+    let created = false;
+    const runtimeInfo = session.getRuntimeInfo.bind(session);
+    session.getRuntimeInfo = async () => {
+      created = true;
+      return runtimeInfo();
+    };
+    session.describePersistence = () =>
+      created
+        ? {
+            provider: "codex",
+            sessionId: session.id!,
+            metadata: { emptyThread: true, systemPrompt: config.systemPrompt },
+          }
+        : null;
+    return session;
+  };
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return makeSession(config);
+    }
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      _launch?: AgentLaunchContext,
+      options?: AgentResumeSessionOptions,
+    ) {
+      resumeOptions.push(options);
+      return makeSession({ provider: "codex", cwd: workdir, ...config });
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    durableTimelineStore: store,
+    logger,
+  });
+  let id = "";
+  try {
+    id = (
+      await manager.createAgent(
+        { provider: "codex", cwd: workdir, systemPrompt: "keep context" },
+        undefined,
+        {},
+      )
+    ).id;
+    expect((await storage.get(id))?.persistence?.metadata).toMatchObject({
+      emptyThread: true,
+      systemPrompt: "keep context",
+    });
+    expect((await manager.reloadAgentSession(id)).id).toBe(id);
+    expect(resumeOptions[0]?.allowEmptyThreadRecovery).toBe(true);
+    await manager.appendTimelineItem(id, { type: "user_message", text: "imported native history" });
+    await manager.flush();
+    await manager.reloadAgentSession(id);
+    expect(resumeOptions[1]?.allowEmptyThreadRecovery).toBeUndefined();
+  } finally {
+    if (id) await manager.closeAgent(id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["foreground", "out-of-band"])(
+  "persists the nonempty marker before native %s work and blocks work on a persistence failure",
+  async (kind) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-empty-durability-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const written = deferred<void>();
+    const release = deferred<void>();
+    const nativeStarted = deferred<void>();
+    let called = 0;
+    let failWrite = false;
+    class GuardedSession extends TestAgentSession {
+      private emptyThread = true;
+      prepareForTurn() {
+        this.emptyThread = false;
+      }
+      override describePersistence() {
+        return { ...super.describePersistence(), metadata: { emptyThread: this.emptyThread } };
+      }
+      override async startTurn() {
+        expect((await storage.get(agentId))?.persistence?.metadata?.emptyThread).toBe(false);
+        called++;
+        nativeStarted.resolve();
+        return super.startTurn();
+      }
+      tryHandleOutOfBand() {
+        return {
+          run: async () => {
+            expect((await storage.get(agentId))?.persistence?.metadata?.emptyThread).toBe(false);
+            called++;
+            nativeStarted.resolve();
+          },
+        };
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig) {
+        return new GuardedSession(config);
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    let agentId = "";
+    try {
+      agentId = (await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {})).id;
+      const originalWrite = storage.applySnapshot.bind(storage);
+      vi.spyOn(storage, "applySnapshot").mockImplementation(async (agent, options) => {
+        if (agent.persistence?.metadata?.emptyThread === false) {
+          written.resolve();
+          await release.promise;
+          if (failWrite) throw new Error("durable storage unavailable");
+        }
+        await originalWrite(agent, options);
+      });
+      let run: Promise<unknown> | undefined;
+      if (kind === "foreground") run = manager.runAgent(agentId, "first request");
+      else expect(manager.tryRunOutOfBand(agentId, "/goal resume")).toBe(true);
+      await written.promise;
+      expect(called).toBe(0);
+      release.resolve();
+      await nativeStarted.promise;
+      if (run) await run;
+      expect(called).toBe(1);
+      failWrite = true;
+      if (kind === "foreground") {
+        await expect(manager.runAgent(agentId, "second request")).rejects.toThrow(
+          "durable storage unavailable",
+        );
+      } else {
+        const failure = deferred<void>();
+        const unsubscribe = manager.subscribe(
+          (event) => {
+            if (
+              event.type === "agent_stream" &&
+              event.event.type === "timeline" &&
+              event.event.item.type === "assistant_message" &&
+              event.event.item.text.includes("durable storage unavailable")
+            )
+              failure.resolve();
+          },
+          { agentId, replayState: false },
+        );
+        expect(manager.tryRunOutOfBand(agentId, "/goal resume")).toBe(true);
+        await failure.promise;
+        unsubscribe();
+      }
+      expect(called).toBe(1);
+    } finally {
+      failWrite = false;
+      release.resolve();
+      if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  "empty",
+  "legacy",
+  "imported-history",
+  "user-input",
+  "unknown-time",
+  "history-only",
+  "no-store",
+  "no-registry",
+  "mismatched-native-id",
+  "stored-marker-false",
+  "lookup-failure",
+])(
+  "authorizes missing Codex thread recovery only with explicit durable empty evidence: %s",
+  async (scenario) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-empty-restore-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const store = new RecordingTimelineStore();
+    const agentId = randomUUID();
+    const handle: AgentPersistenceHandle = {
+      provider: "codex",
+      sessionId: "original-thread",
+      metadata: { cwd: workdir, ...(scenario === "legacy" ? {} : { emptyThread: true }) },
+    };
+    const config = {
+      provider: "codex" as const,
+      cwd: workdir,
+      model: "gpt-5.4",
+      systemPrompt: "preserve context",
+      mcpServers: { shared: { type: "http" as const, url: "https://example.test/mcp" } },
+    };
+    let lastUserMessageAt: string | null | undefined = null;
+    if (scenario === "user-input") lastUserMessageAt = new Date().toISOString();
+    if (scenario === "unknown-time") lastUserMessageAt = undefined;
+    await storage.upsert({
+      id: agentId,
+      provider: "codex",
+      cwd: workdir,
+      labels: {},
+      lastStatus: "idle",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastUserMessageAt,
+      persistence: {
+        ...handle,
+        sessionId: scenario === "mismatched-native-id" ? "different-thread" : handle.sessionId,
+        metadata:
+          scenario === "stored-marker-false"
+            ? { ...handle.metadata, emptyThread: false }
+            : handle.metadata,
+      },
+      config,
+      ...(scenario === "history-only" ? { archivedAt: new Date().toISOString() } : {}),
+    });
+    if (scenario === "imported-history")
+      await store.appendCommitted(agentId, {
+        type: "user_message",
+        text: "native imported conversation",
+      });
+    if (scenario === "lookup-failure")
+      vi.spyOn(store, "getLatestCommittedSeq").mockRejectedValueOnce(
+        new Error("cannot read timeline"),
+      );
+    let received: AgentResumeSessionOptions | undefined;
+    let receivedConfig: Partial<AgentSessionConfig> | undefined;
+    const client = new (class extends TestAgentClient {
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        overrides?: Partial<AgentSessionConfig>,
+        _launch?: AgentLaunchContext,
+        options?: AgentResumeSessionOptions,
+      ) {
+        received = options;
+        receivedConfig = overrides;
+        return new McpCapableTestAgentSession(config);
+      }
+    })();
+    const registry =
+      scenario === "no-store" ? new AgentStorage(join(workdir, "agents"), logger) : storage;
+    const manager = new AgentManager({
+      clients: { codex: client },
+      ...(scenario === "no-registry" ? {} : { registry }),
+      ...(scenario === "no-store" ? {} : { durableTimelineStore: store }),
+      logger,
+    });
+    try {
+      const agent = await manager.resumeAgentFromPersistence(
+        handle,
+        config,
+        agentId,
+        { lastUserMessageAt: null },
+        { allowEmptyThreadRecovery: true },
+      );
+      const recoverable = ["empty", "no-store"].includes(scenario);
+      expect(received?.allowEmptyThreadRecovery === true).toBe(recoverable);
+      expect(agent.id).toBe(agentId);
+      expect(receivedConfig).toMatchObject({
+        model: config.model,
+        systemPrompt: config.systemPrompt,
+        mcpServers: config.mcpServers,
+      });
+      const saved = await registry.get(agentId);
+      if (scenario === "no-registry") return;
+      expect(saved?.persistence?.sessionId).toBe(agent.persistence?.sessionId);
+      if (recoverable) expect(saved?.persistence?.sessionId).not.toBe(handle.sessionId);
+    } finally {
+      await manager.closeAgent(agentId).catch(() => undefined);
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();

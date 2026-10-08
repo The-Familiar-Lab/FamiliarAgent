@@ -327,6 +327,7 @@ export const ar: TranslationResources = {
       copyCode: "نسخ الرمز",
       copyTurn: "نسخ بدوره",
       copyMessage: "انسخ الرسالة",
+      forkOnAnotherHost: "تفريع المحادثة إلى خادم آخر…",
       forkMenu: "تفريع الرسالة",
       forkInNewTab: "تفريع في تبويب جديد",
       forkInNewWorkspace: "تفريع في مساحة عمل جديدة",

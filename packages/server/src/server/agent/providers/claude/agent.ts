@@ -416,6 +416,7 @@ interface ClaudeAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: ClaudeQueryFactory;
+  initializationTimeoutMs?: number;
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
   rewindSdk?: ClaudeRewindSdk;
@@ -430,6 +431,7 @@ interface ClaudeAgentSessionOptions {
   persistSession?: boolean;
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
+  initializationTimeoutMs?: number;
   resolveBinary: () => Promise<string>;
   rewindSdk?: ClaudeRewindSdk;
 }
@@ -973,7 +975,10 @@ function claudeModeCatalog(env: NodeJS.ProcessEnv): {
   defaultModeId: PermissionMode;
 } {
   if (claudeAutoModeUnavailableOn(env)) {
-    return { modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"), defaultModeId: "default" };
+    return {
+      modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"),
+      defaultModeId: "default",
+    };
   }
   return { modes: DEFAULT_MODES, defaultModeId: "auto" };
 }
@@ -1325,7 +1330,11 @@ class TimelineAssembler {
       !isClaudeTranscriptNoiseText(nextAssistantText)
     ) {
       state.emittedAssistantLength = state.assistantText.length;
-      items.push({ type: "assistant_message", text: nextAssistantText, messageId: state.id });
+      items.push({
+        type: "assistant_message",
+        text: nextAssistantText,
+        messageId: state.id,
+      });
     }
 
     const nextReasoningText = state.reasoningText.slice(state.emittedReasoningLength);
@@ -1521,6 +1530,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly queryFactory?: ClaudeQueryFactory;
+  private readonly initializationTimeoutMs: number;
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly rewindSdk: ClaudeRewindSdk;
@@ -1530,6 +1540,10 @@ export class ClaudeAgentClient implements AgentClient {
     this.logger = options.logger.child({ module: "agent", provider: "claude" });
     this.runtimeSettings = options.runtimeSettings;
     this.queryFactory = options.queryFactory;
+    this.initializationTimeoutMs = options.initializationTimeoutMs ?? 30_000;
+    if (!Number.isFinite(this.initializationTimeoutMs) || this.initializationTimeoutMs <= 0) {
+      throw new Error("Claude initializationTimeoutMs must be positive and finite");
+    }
     this.resolveBinary = options.resolveBinary ?? (() => resolveClaudeBinary(this.runtimeSettings));
     this.resolveVersion =
       options.resolveVersion ??
@@ -1555,6 +1569,7 @@ export class ClaudeAgentClient implements AgentClient {
       persistSession: options?.persistSession,
       logger: this.logger,
       queryFactory: this.queryFactory,
+      initializationTimeoutMs: this.initializationTimeoutMs,
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
     });
@@ -1584,6 +1599,7 @@ export class ClaudeAgentClient implements AgentClient {
       launchEnv: launchContext?.env,
       logger: this.logger,
       queryFactory: this.queryFactory,
+      initializationTimeoutMs: this.initializationTimeoutMs,
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
     });
@@ -2074,8 +2090,10 @@ class ClaudeAgentSession implements AgentSession {
   private readonly persistSession?: boolean;
   private readonly logger: Logger;
   private readonly queryFactory?: ClaudeQueryFactory;
+  private readonly initializationTimeoutMs: number;
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
+  private queryInitialization: Promise<Query> | null = null;
   private readonly harnessEnvironment: Record<string, string>;
   private readonly usageSessionKey = randomUUID();
   private childProcess: ChildProcess | null = null;
@@ -2169,6 +2187,10 @@ class ClaudeAgentSession implements AgentSession {
     this.persistSession = options.persistSession;
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
+    this.initializationTimeoutMs = options.initializationTimeoutMs ?? 30_000;
+    if (!Number.isFinite(this.initializationTimeoutMs) || this.initializationTimeoutMs <= 0) {
+      throw new Error("Claude initializationTimeoutMs must be positive and finite");
+    }
     this.resolveBinary = options.resolveBinary;
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
@@ -3169,6 +3191,18 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
+    if (this.queryInitialization) return this.queryInitialization;
+    const pending = this.initializeQuery(launchMode);
+    this.queryInitialization = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.queryInitialization === pending) this.queryInitialization = null;
+    }
+  }
+
+  private async initializeQuery(launchMode: PermissionMode): Promise<Query> {
+    if (this.closed) throw new Error("Claude session is closed");
     if (this.query && !this.queryRestartNeeded) {
       return this.query;
     }
@@ -3213,6 +3247,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = createAsyncMessageInput<SDKUserMessage>();
     const options = await this.buildOptions(launchMode);
+    if (this.closed) throw new Error("Claude session is closed");
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     // A fresh Claude process has no turn of its own in flight.
@@ -3229,9 +3264,35 @@ class ClaudeAgentSession implements AgentSession {
         },
       },
     );
-    const fastMode = this.resolveFastModeSetting();
-    if (fastMode !== null) {
-      await this.query.applyFlagSettings({ fastMode });
+    const activeQuery = this.query;
+    try {
+      await withTimeout(
+        (async () => {
+          await activeQuery.initializationResult?.();
+          const fastMode = this.resolveFastModeSetting();
+          if (fastMode !== null) await activeQuery.applyFlagSettings({ fastMode });
+        })(),
+        this.initializationTimeoutMs,
+        "Claude initialization timed out. Check Claude login and operating-system folder access permissions, then retry.",
+      );
+      if (this.closed) throw new Error("Claude session is closed");
+    } catch (error) {
+      // Retire only this launch. A permission prompt must not leave an idle child forever.
+      const child = this.childProcess;
+      this.childProcess = null;
+      this.query = null;
+      this.input = null;
+      input.end();
+      activeQuery.close?.();
+      if (child) {
+        await terminateWithTreeKill(child, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        }).catch((cleanupError) =>
+          this.logger.warn({ err: cleanupError }, "Claude startup cleanup failed"),
+        );
+      }
+      throw error;
     }
     // Do not kick off background control-plane queries here. Methods like
     // supportedCommands()/setPermissionMode() may execute immediately after
@@ -3297,7 +3358,11 @@ class ClaudeAgentSession implements AgentSession {
         : undefined;
     assertClaudeThinkingOptionSupported(this.config.model, thinkingOptionId);
     if (thinkingOptionId === CLAUDE_DISABLED_THINKING_OPTION_ID) {
-      return { thinking: { type: "disabled" }, effort: undefined, ultracode: false };
+      return {
+        thinking: { type: "disabled" },
+        effort: undefined,
+        ultracode: false,
+      };
     }
     if (thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID) {
       return {
@@ -3352,7 +3417,9 @@ class ClaudeAgentSession implements AgentSession {
       this.config.providerOptions,
       this.config.toolPolicy,
     );
-    const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
+    const settingsOptions = this.buildSettingsOptions(providerOptions, {
+      ultracode,
+    });
     const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(permissionMode, sdkEnv);
 
@@ -3512,7 +3579,10 @@ class ClaudeAgentSession implements AgentSession {
             });
           }
         } else {
-          content.push({ type: "text", text: renderPromptAttachmentAsText(chunk) });
+          content.push({
+            type: "text",
+            text: renderPromptAttachmentAsText(chunk),
+          });
         }
       }
     } else {
@@ -3803,7 +3873,11 @@ class ClaudeAgentSession implements AgentSession {
   private failRunningRuntimeTasks(): void {
     this.dispatchEvents(
       foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
-        (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
+        (event): AgentStreamEvent => ({
+          type: "provider_subagent",
+          provider: "claude",
+          event,
+        }),
       ),
     );
   }
@@ -4334,7 +4408,13 @@ class ClaudeAgentSession implements AgentSession {
         message,
         canonicalSubagentId ?? parentToolUseId,
       ),
-    ).map((event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }));
+    ).map(
+      (event): AgentStreamEvent => ({
+        type: "provider_subagent",
+        provider: "claude",
+        event,
+      }),
+    );
     const routedId = canonicalSubagentId ?? parentToolUseId;
     return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, routedId)];
   }
@@ -4502,7 +4582,11 @@ class ClaudeAgentSession implements AgentSession {
       events.push({
         type: "provider_subagent",
         provider: "claude",
-        event: { type: "timeline", id: ownerSubagentId, item: taskNotificationItem },
+        event: {
+          type: "timeline",
+          id: ownerSubagentId,
+          item: taskNotificationItem,
+        },
       });
       return;
     }
@@ -4879,7 +4963,10 @@ class ClaudeAgentSession implements AgentSession {
           type: "permission_resolved",
           provider: "claude",
           requestId,
-          resolution: { behavior: "deny", message: "Permission request canceled" },
+          resolution: {
+            behavior: "deny",
+            message: "Permission request canceled",
+          },
         });
         reject(new Error("Permission request aborted"));
       };
@@ -4967,7 +5054,11 @@ class ClaudeAgentSession implements AgentSession {
         for (const event of foldSubagentObservations(
           this.taskProtocolSource.observeHook(input as ClaudeHookObservationInput),
         )) {
-          this.notifySubscribers({ type: "provider_subagent", provider: "claude", event });
+          this.notifySubscribers({
+            type: "provider_subagent",
+            provider: "claude",
+            event,
+          });
         }
       } catch (error) {
         this.logger.debug({ err: error }, "Failed to read subagent effort from hook");
@@ -5998,7 +6089,9 @@ function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): Claud
       const block = toObjectRecord(value);
       if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
       if (!toolCalls.has(block.tool_use_id)) continue;
-      outcomesByToolCallId.set(block.tool_use_id, { failed: block.is_error === true });
+      outcomesByToolCallId.set(block.tool_use_id, {
+        failed: block.is_error === true,
+      });
     }
   }
 
@@ -6033,7 +6126,9 @@ function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory
   };
   const workflowDirectory = path.join(sessionDirectory, "workflows");
   if (fs.existsSync(workflowDirectory)) {
-    for (const entry of fs.readdirSync(workflowDirectory, { withFileTypes: true })) {
+    for (const entry of fs.readdirSync(workflowDirectory, {
+      withFileTypes: true,
+    })) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
       try {
         history.workflowContents.push(
@@ -6143,7 +6238,10 @@ function readClaudeHistoricalSubagentToolResults(
       if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
       const match = /agentId:\s*([\w-]+)/.exec(JSON.stringify(block.content));
       if (!match?.[1]) continue;
-      results.set(match[1], { toolCallId: block.tool_use_id, failed: block.is_error === true });
+      results.set(match[1], {
+        toolCallId: block.tool_use_id,
+        failed: block.is_error === true,
+      });
     }
   }
   return results;

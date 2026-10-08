@@ -26,6 +26,7 @@ import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RetainedChatContent } from "./retained-chat-content";
+import { SharedSessionBanner } from "./shared-session-banner";
 import { Composer } from "@/composer";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import {
@@ -1269,6 +1270,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
   const dockContent = (
     <View style={styles.contentContainer}>
+      <SharedSessionBanner serverId={serverId} workspaceId={workspaceId} agentId={agentId} />
       {streamContent}
 
       {showHistorySyncError ? (

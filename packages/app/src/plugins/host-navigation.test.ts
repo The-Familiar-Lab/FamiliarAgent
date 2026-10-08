@@ -1,7 +1,48 @@
 import { describe, expect, it } from "vitest";
-import { createPluginHostNavigation } from "./host-navigation-model";
+import { createPluginHostNavigation, preparePluginBrowserUrl } from "./host-navigation-model";
 
 describe("plugin host navigation", () => {
+  it("forwards only remote loopback URLs and never falls back to the local machine on failure", async () => {
+    const calls: unknown[] = [];
+    const forward = async (input: { sshEndpoint: string; url: string }) => {
+      calls.push(input);
+      return { url: "http://127.0.0.1:50000/chat?view=1#message" };
+    };
+    await expect(
+      preparePluginBrowserUrl(
+        {
+          url: "http://localhost:8080/chat?view=1#message",
+          sshEndpoint: "ssh://remote?daemonPort=6787",
+          requiresSsh: true,
+        },
+        forward,
+      ),
+    ).resolves.toBe("http://127.0.0.1:50000/chat?view=1#message");
+    expect(calls).toEqual([
+      {
+        sshEndpoint: "ssh://remote?daemonPort=6787",
+        url: "http://localhost:8080/chat?view=1#message",
+      },
+    ]);
+    await expect(
+      preparePluginBrowserUrl({ url: "https://example.com", requiresSsh: true }, forward),
+    ).resolves.toBe("https://example.com");
+    await expect(
+      preparePluginBrowserUrl({ url: "http://localhost:8080", requiresSsh: false }, forward),
+    ).resolves.toBe("http://localhost:8080");
+    await expect(
+      preparePluginBrowserUrl({ url: "http://localhost:8080", requiresSsh: true }, forward),
+    ).rejects.toThrow("Reconnect");
+    await expect(
+      preparePluginBrowserUrl(
+        { url: "http://localhost:8080", sshEndpoint: "ssh://remote", requiresSsh: true },
+        async () => {
+          throw new Error("SSH failed");
+        },
+      ),
+    ).rejects.toThrow("SSH failed");
+    expect(calls).toHaveLength(1);
+  });
   function setup(electron = true) {
     const destinations: unknown[] = [];
     const browsers: string[] = [];
@@ -86,5 +127,97 @@ describe("plugin host navigation", () => {
       "workspaceId",
     );
     expect(browsers).toEqual([]);
+  });
+
+  it("focuses a terminal on its actual host and rejects missing workspace or terminal IDs", () => {
+    const { navigation, destinations } = setup();
+    navigation.openTerminal!({ workspaceId: "one", terminalId: "local-term" });
+    navigation.openTerminal!({ workspaceId: "two", terminalId: "remote-term", serverId: "remote" });
+    expect(destinations).toEqual([
+      {
+        serverId: "selected",
+        workspaceId: "one",
+        target: { kind: "terminal", terminalId: "local-term" },
+      },
+      {
+        serverId: "remote",
+        workspaceId: "two",
+        target: { kind: "terminal", terminalId: "remote-term" },
+      },
+    ]);
+    expect(() => navigation.openTerminal!({ workspaceId: "one", terminalId: "" })).toThrow(
+      "terminalId",
+    );
+    expect(() => navigation.openTerminal!({ workspaceId: "missing", terminalId: "term" })).toThrow(
+      "Workspace is unavailable",
+    );
+    expect(() =>
+      navigation.openTerminal!({ workspaceId: "one", terminalId: "term", serverId: "remote" }),
+    ).toThrow("Workspace is unavailable");
+    expect(destinations).toHaveLength(2);
+  });
+
+  it("awaits remote URL preparation before creating a tab, preserving the remote workspace owner", async () => {
+    const events: unknown[] = [];
+    let finish!: (url: string) => void;
+    const navigation = createPluginHostNavigation("local", {
+      browserAvailable: true,
+      resolveWorkspace: ({ workspaceId }) => workspaceId,
+      openAgent: () => {},
+      openWorkspace: (value) => {
+        events.push(value);
+      },
+      createBrowser: ({ initialUrl }) => {
+        events.push(initialUrl);
+        return { browserId: "new-browser" };
+      },
+      prepareBrowserUrl: ({ serverId, url }) => {
+        events.push({ serverId, url });
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+    });
+    const pending = navigation.openBrowser!({
+      serverId: "remote",
+      workspaceId: "remote-work",
+      url: "http://localhost:8080/chat",
+    });
+    expect(events).toEqual([{ serverId: "remote", url: "http://localhost:8080/chat" }]);
+    finish("http://127.0.0.1:50000/chat");
+    await pending;
+    expect(events.slice(1)).toEqual([
+      "http://127.0.0.1:50000/chat",
+      {
+        serverId: "remote",
+        workspaceId: "remote-work",
+        target: { kind: "browser", browserId: "new-browser" },
+      },
+    ]);
+  });
+
+  it("does not create a local tab when remote URL preparation fails", async () => {
+    const events: string[] = [];
+    const navigation = createPluginHostNavigation("local", {
+      browserAvailable: true,
+      resolveWorkspace: ({ workspaceId }) => workspaceId,
+      openAgent: () => {},
+      openWorkspace: () => {},
+      createBrowser: ({ initialUrl }) => {
+        events.push(initialUrl);
+        return { browserId: "never" };
+      },
+      prepareBrowserUrl: async () => {
+        throw new Error("SSH unavailable");
+      },
+    });
+    await expect(
+      navigation.openBrowser!({
+        serverId: "remote",
+        workspaceId: "work",
+        url: "http://localhost:8080",
+      }),
+    ).rejects.toThrow("SSH unavailable");
+    expect(events).toEqual([]);
   });
 });

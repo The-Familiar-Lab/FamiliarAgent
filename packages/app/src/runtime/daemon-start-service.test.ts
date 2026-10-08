@@ -316,6 +316,21 @@ describe("upsertDesktopDaemonConnection", () => {
     ]);
   });
 
+  it("refreshes a registered local host after its managed daemon port changes", async () => {
+    const host = makeRelayOnlyHost("srv_desktop");
+    host.connections = [
+      { id: "direct:localhost:6767", type: "directTcp", endpoint: "localhost:6767", useTls: false },
+    ];
+    host.preferredConnectionId = host.connections[0].id;
+    const fake = createFakeStore([host]);
+    expect(
+      await upsertDesktopDaemonConnection(fake.store, makeStatus({ listen: "127.0.0.1:6786" })),
+    ).toEqual({ ok: true });
+    expect(fake.upserts).toEqual([
+      { listenAddress: "127.0.0.1:6786", serverId: "srv_desktop", hostname: "desktop" },
+    ]);
+  });
+
   it("does not add localhost when desktop bootstrap finds its server id already registered", async () => {
     const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
 

@@ -331,6 +331,7 @@ export const ru: TranslationResources = {
       copyCode: "Скопировать код",
       copyTurn: "Скопировать ответ",
       copyMessage: "Копировать сообщение",
+      forkOnAnotherHost: "Ответвить разговор на другой сервер…",
       forkMenu: "Форкнуть чат отсюда",
       forkInNewTab: "Создать форк в новой вкладке",
       forkInNewWorkspace: "Создать форк в новом рабочем пространстве",

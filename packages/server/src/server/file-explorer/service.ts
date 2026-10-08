@@ -123,6 +123,21 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+const MEDIA_MIME_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".ogv": "video/ogg",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+};
+
 interface ScopedPathParams {
   root: string;
   relativePath?: string;
@@ -552,6 +567,8 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
     let mimeType = "application/octet-stream";
     if (ext in IMAGE_MIME_TYPES) {
       mimeType = IMAGE_MIME_TYPES[ext];
+    } else if (ext in MEDIA_MIME_TYPES) {
+      mimeType = MEDIA_MIME_TYPES[ext];
     } else {
       const sample = Buffer.alloc(FILE_TYPE_SAMPLE_BYTES);
       const { bytesRead } = await handle.read(sample, 0, sample.length, 0);

@@ -101,6 +101,10 @@ import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-confi
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 
 export interface PaseoToolHostDependencies {
+  familiarWorkspace?: (
+    operation: "read" | "save" | "list",
+    input: Record<string, unknown>,
+  ) => Promise<unknown>;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager?: TerminalManager | null;
@@ -610,6 +614,33 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       handler: handler as PaseoToolDefinition["handler"],
     });
   };
+  if (options.familiarWorkspace) {
+    registerTool(
+      "familiar_workspace",
+      {
+        title: "FamiliarAgent shared workspace",
+        description:
+          "Read, list, or save the shared context, machine path mappings, and native tool links on this authority. For read supply input {id}; for save supply the complete document from read with its unchanged revision. Concurrent changes return a conflict; never overwrite without rereading. This shares data and does not start or orchestrate agents.",
+        inputSchema: {
+          operation: z.enum(["read", "save", "list"]),
+          input: z.record(z.string(), z.unknown()),
+        },
+      },
+      async ({
+        operation,
+        input,
+      }: {
+        operation: "read" | "save" | "list";
+        input: Record<string, unknown>;
+      }) => {
+        const result = await options.familiarWorkspace!(operation, input);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          structuredContent: { result },
+        };
+      },
+    );
+  }
   const toCatalog = (): PaseoToolCatalog => ({
     tools,
     getTool(name: string): PaseoToolDefinition | undefined {

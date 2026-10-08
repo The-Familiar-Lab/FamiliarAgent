@@ -1,223 +1,78 @@
-<p align="center">
-  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
-</p>
+# FamiliarAgent
 
-<h1 align="center">Paseo</h1>
+FamiliarAgent connects existing agent tools, conversations and project folders across machines. Its macOS app provides a common place to switch tools, share working context and continue a logical session while each original harness keeps control of its model loop, permissions and orchestration.
 
-<p align="center">
-  <a href="README.md">English</a> ·
-  <a href="README.zh-CN.md">简体中文</a> ·
-  <a href="README.ja.md">日本語</a> ·
-  <a href="README.ko.md">한국어</a>
-</p>
+The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, terminals, editor, file explorer, Git worktrees, browser panels and plugin system. FamiliarAgent adds the integration layer; it is a separate project and is not an official Paseo release.
 
-<p align="center">
-  <a href="https://github.com/getpaseo/paseo/stargazers">
-    <img src="https://img.shields.io/github/stars/getpaseo/paseo?style=flat&logo=github" alt="GitHub stars">
-  </a>
-  <a href="https://github.com/getpaseo/paseo/releases">
-    <img src="https://img.shields.io/github/v/release/getpaseo/paseo?style=flat&logo=github" alt="GitHub release">
-  </a>
-  <a href="https://x.com/moboudra">
-    <img src="https://img.shields.io/badge/%40moboudra-555?logo=x" alt="X">
-  </a>
-  <a href="https://discord.gg/jz8T2uahpH">
-    <img src="https://img.shields.io/badge/Discord-555?logo=discord" alt="Discord">
-  </a>
-  <a href="https://www.reddit.com/r/PaseoAI/">
-    <img src="https://img.shields.io/badge/Reddit-555?logo=reddit" alt="Reddit">
-  </a>
-</p>
+**Current version: 0.12.0.** The installed macOS app and Ubuntu runtime have passed the documented session-switching, pointer-fork, original-history and restart-recovery scenarios. Local verification passed 906 tests, type checks, lint and daemon transport checks. This is a development distribution; see the scope and account-specific limits in the Hub guide.
 
-<p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, and Muse Code agents.</p>
+- [Using Familiar Hub](docs/familiar-hub.md)
+- [Development, verification and source history](docs/familiar-development.md)
+- [Changelog](CHANGELOG.md)
+- [Source repository](https://github.com/The-Familiar-Lab/FamiliarAgent)
 
-<p align="center">
-  <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">
-</p>
+## What it connects
 
-<p align="center">
-  <img src="https://paseo.sh/mobile-mockup.png" alt="Paseo mobile app" width="100%">
-</p>
+| Area                 | Current behavior                                                                                                                                                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Projects and servers | **All servers** brings connected hosts together. Link existing folders on each machine and choose a destination for each operation.                                                                                         |
+| Sessions             | Link a native conversation or an external history source. **Switch tool & continue** keeps the logical session; **Fork session here** creates a separate branch.                                                            |
+| Shared context       | Revisioned memory, bounded continuation context and MCP access to original conversation pages. Conflicting writes are rejected.                                                                                             |
+| Tools and interfaces | Open supported native terminal and web interfaces inside FamiliarAgent, or launch installed desktop apps in their own windows. Register a command or URL, use available install recipes, or choose **Ask agent to set up**. |
+| Skills and MCP       | Map existing skill directories, inject supported session MCP configuration and explicitly share HTTP MCP definitions. Target-specific paths and executables remain on their owning servers.                                 |
+| Files and Git        | Reuse the file explorer, editor, media playback, uploads, downloads and Git/worktree operations. **Separate Git worktree** provides optional isolation.                                                                     |
+| History              | Discover supported Cursor, VS Code, Codex, Claude and Antigravity records. Search and hide/restore the index; read the original source on demand. ChatGPT history uses official export JSON.                                |
+| Discord              | Optionally connect AI Agent Discord Connector to a native agent or a logical session that follows its active native agent after a tool switch.                                                                              |
 
-Paseo is an open source agentic development environment for desktop, mobile, web, and CLI. Open the desktop app and work: agents, editor, terminals, diffs, pull requests, and a browser in one window. Run many agents at once, each in its own worktree, on one machine or several. The mobile app is the full app, native on iOS and Android.
+The catalog contains different kinds of entries: CLI launch connections, installed desktop apps and reference projects requiring a command or URL. An entry is not a complete adapter for every feature of that project. Native provider sessions, terminal harnesses and external desktop apps expose different capabilities.
 
-- **Parallel agents:** Run many agents at once, each in its own worktree.
-- **Built-in orchestration:** Agents in Paseo can create worktrees, launch other agents, and talk to them, across providers.
-- **Complete development workflow:** Edit files, review diffs, open pull requests, and run terminals, in split panes you arrange how you want.
-- **Self-hosted:** Agents run on your machine with your full dev environment. Use your tools, your configs, and your skills.
-- **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, and Muse Code through the same interface. Pick the right model for each job.
-- **Voice control:** Dictate tasks or talk through problems in voice mode. Hands-free when you need it.
-- **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
-- **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
+## Continuing work without copying every conversation
 
-[Run parallel tasks in Paseo](https://paseo.sh/docs/parallel-development): start agents in separate worktrees, review their diffs, run each app, and check it in the built-in browser.
+A logical session links native executions and source references. Supported agents receive shared context through `familiar_context`, `familiar_history` and `familiar_memory`; the native agent decides when to call those tools. **Shared session connected** identifies linked native chats, and **Open Familiar Hub** returns to their common session.
 
-## Plugins
+A fork records its parent revision and history boundaries. Original conversations stay on their owning machine, and later parent messages are excluded from the fork's recorded boundary. Missing or rewritten sources produce an error. Source reads still require I/O and access to the owning server.
 
-Plugins run on the daemon and show up in every client you connect, with the same UI on desktop, web,
-iOS, and Android. Write a plugin once and it is on your phone.
+Folder mapping does not synchronize code or install a shared filesystem. Each destination needs its own existing checkout, worktree or shared mount. Provider-private heap state, model caches, credentials and unpublished orchestration checkpoints are not portable between arbitrary tools. See the [Hub guide](docs/familiar-hub.md) for the supported flows and limits.
 
-- **UI:** screens, sidebar items, workspace panels, Command Center items, slash commands, composer pills, attachment sources, timeline items, themes.
-- **Agent lifecycle:** change configuration, environment, and MCP servers, answer permissions, follow up when a turn ends.
-- **Providers:** add a coding agent as a provider.
+## Installation and data
 
-Install from the registry with `paseo plugin add owner/slug`, or from Git or a local directory.
+The current desktop target is macOS; connected Ubuntu/Linux servers run the user-scoped runtime. **Add server** reuses trusted SSH configuration and can install the runtime remotely without root access. Existing agent accounts still require their native authentication flow.
 
-**[Browse plugins](https://paseo.sh/plugins)** · **[Plugin docs](https://paseo.sh/docs/plugins)**
+- macOS application: `/Applications/FamiliarAgent.app`
+- Mac/Linux data root: `~/.local/share/familiaragent/`
+- CLI launcher: `~/.local/share/familiaragent/bin/familiar`
 
-Plugins run with access to your daemon machine and inside connected clients; install only code you trust.
+The data root separates application state, desktop settings, Discord configuration, provider tools and runtime files. Explicit environment overrides remain supported. Migration checks for running processes and conflicting stores before moving legacy data; it does not merge unrelated stores automatically. A checkout or application reinstall does not replace user data.
 
-## Getting Started
+SSH and daemon ports are separate settings and are preserved from the selected connection profile. Shared context access is scoped to the linked sessions and sources. Relevant session changes renew those connections; failures retain the saved session and provide a recovery error. Runtime updates are deferred while an agent is working or its state cannot be established.
 
-Paseo runs a local server called the daemon that manages your coding agents. Clients like the desktop app, mobile app, web app, and CLI connect to it.
+Keep one installed app and use Git for source versions. Local builds without a configured FamiliarAgent update feed use manual updates. The upstream Paseo updater does not replace this app.
 
-### Prerequisites
+## Build and verify
 
-You need at least one agent CLI installed and configured with your credentials:
+Use Node.js 24 and the committed npm lockfiles. The Discord connector has a separate dependency tree. The [development guide](docs/familiar-development.md) describes the complete setup, required builds, CI scope and release procedure.
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- [Codex](https://github.com/openai/codex)
-- [GitHub Copilot](https://github.com/features/copilot/cli/)
-- [OpenCode](https://github.com/anomalyco/opencode)
-- [Pi](https://pi.dev)
-- [Antigravity](https://paseo.sh/docs/supported-providers#antigravity)
-- [Muse Code](https://paseo.sh/docs/muse-code)
+After setup and prerequisite builds:
 
-### Desktop app (recommended)
-
-Download it from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open the app and the daemon starts automatically. Nothing else to install.
-
-To connect from your phone, open **Settings → your host → Pair Device**.
-
-### Server
-
-For a server, a VM, or any machine without the desktop app. Install the CLI and start the daemon:
-
-```bash
-npm install -g @getpaseo/cli
-paseo
+```sh
+npm run verify:familiar -- --workspace --app
+npm run verify:familiar -- --integration
 ```
 
-Paseo starts, then asks whether to enable the end-to-end encrypted relay for device pairing. If you decline, connect directly over TCP, Tailscale, or another VPN. The desktop, mobile, and web apps connect to this daemon like any other host.
+The verification runner checks types, lint, targeted regressions and temporary daemon transports without opening the app. It does not log into real accounts, call paid models or validate every external tool. Actual SSH, provider and final macOS UI checks are separate.
 
-For full setup and configuration, see:
+To build a local Apple Silicon app after verification:
 
-- [Docs](https://paseo.sh/docs)
-- [Connectivity guide](https://paseo.sh/docs/connectivity)
-- [Configuration reference](https://paseo.sh/docs/configuration)
-
-### Docker
-
-Run the Paseo daemon and self-hosted web UI in Docker:
-
-```bash
-docker run -d --name paseo \
-  -p 6767:6767 \
-  -e PASEO_PASSWORD=change-me \
-  -v "$PWD/paseo-home:/home/paseo" \
-  -v "$PWD:/workspace" \
-  ghcr.io/getpaseo/paseo:latest
+```sh
+npm run build:desktop -- --dir --mac --arm64
 ```
 
-Open `http://localhost:6767` after it starts. Extend the base image with the agent CLIs you use, then provide credentials through environment variables or the persistent `/home/paseo` volume. See the [Docker documentation](docs/docker.md) for full setup details.
+The output is `packages/desktop/release/mac-arm64/FamiliarAgent.app`. A local ad-hoc signed build is not a Developer ID signed and notarized release. Do not use inherited upstream release or deployment commands as FamiliarAgent publishing shortcuts.
 
-## CLI
+## Source and licenses
 
-Everything you can do in the app, you can do from the terminal.
+FamiliarAgent retains Paseo's Apache-2.0 license and original attribution. The pinned upstream commit is recorded in [UPSTREAM.json](UPSTREAM.json); the original README is preserved in [UPSTREAM-README.md](UPSTREAM-README.md). Internal `@getpaseo/*` package names remain where the reused code requires them. FamiliarAgent's product version is maintained separately from those upstream package versions.
 
-```bash
-paseo run --provider claude/opus-4.6 "implement user authentication"
-paseo run --provider codex/gpt-5.5 --worktree feature-x "implement feature X"
+AI Agent Discord Connector is included under MIT in [integrations/discord-connector](integrations/discord-connector), with its [license](integrations/discord-connector/LICENSE) and [source record](integrations/discord-connector/UPSTREAM.json). History-reader source attribution and component licenses are recorded in [THIRD-PARTY.txt](plugins/familiar-workspace/THIRD-PARTY.txt).
 
-paseo ls                           # list running agents
-paseo attach abc123                # stream live output
-paseo send abc123 "also add tests" # follow-up task
-
-# run on a remote daemon; --cwd is a path on that host
-paseo run --host workstation.local:6767 --cwd /workspace "run the full test suite"
-```
-
-See the [full CLI reference](https://paseo.sh/docs/cli) for more.
-
-## TypeScript SDK
-
-Build issue integrations, dashboards, and orchestration services with `@getpaseo/client`:
-
-```ts
-import { createPaseoClient } from "@getpaseo/client";
-
-const client = createPaseoClient({ url: "ws://127.0.0.1:6767/ws" });
-await client.connect();
-
-const agent = await client.agents.create({
-  config: { provider: "codex/gpt-5.5" },
-  cwd: "/Users/me/dev/storefront",
-  prompt: "Review the current diff and name the riskiest change.",
-});
-
-const result = await agent.waitForFinish();
-console.log(result.lastMessage);
-
-await client.close();
-```
-
-See the [SDK quickstart](https://paseo.sh/docs/sdk/quickstart), [recipes](https://paseo.sh/docs/sdk/recipes), and [API reference](https://paseo.sh/docs/sdk/reference).
-
-## Skills
-
-Skills teach your agent to use Paseo to orchestrate other agents.
-
-```bash
-npx skills add getpaseo/paseo
-```
-
-Then use them in any agent conversation:
-
-- `/paseo-handoff` — hand off work between agents. I use this to plan with Claude and then handoff to Codex to implement.
-- `/paseo-advisor` — spin up a single agent as an advisor for a second opinion, without delegating the work itself.
-- `/paseo-committee` — form a committee of two contrasting agents to step back, do root cause analysis, and produce a plan.
-
-## Development
-
-Quick monorepo package map:
-
-- `packages/server`: Paseo daemon (agent process orchestration, WebSocket API, MCP server)
-- `packages/app`: Expo client (iOS, Android, web)
-- `packages/cli`: `paseo` CLI for daemon and agent workflows
-- `packages/desktop`: Electron desktop app
-- `packages/relay`: Relay transport and encryption used by the daemon and clients
-- `packages/website`: Marketing site and documentation (`paseo.sh`)
-
-Common commands:
-
-```bash
-# run all local dev services
-npm run dev
-
-# run individual surfaces
-npm run dev:server
-npm run dev:app
-npm run dev:desktop
-npm run dev:website
-
-# build the server stack
-npm run build:server
-
-# repo-wide checks
-npm run typecheck
-```
-
-## Sponsors
-
-Paseo is an independent project used by tens of thousands of developers daily, built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
-
-<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
-
-## Related projects
-
-- [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — official distributed relay, written in Elixir
-- [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code extension
-
-## License
-
-Apache-2.0
+See [LICENSE](LICENSE) and [NOTICE-FamiliarAgent.md](NOTICE-FamiliarAgent.md) for the retained license and modification notices. Referenced tools that are launched externally retain their own installation, account and license requirements.

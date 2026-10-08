@@ -38,12 +38,18 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly url: string;
       readonly workspaceId: string;
       readonly serverId?: string;
-    }) => void;
+    }) => void | Promise<void>;
     readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
+    readonly openTerminal?: (input: {
+      workspaceId: string;
+      terminalId: string;
+      serverId?: string;
+    }) => void;
+    readonly openServers?: () => void;
   };
 }
 
@@ -178,6 +184,8 @@ export type PluginScreenTitle = string | ((params: PluginScreenParams) => string
 export interface PluginScreenContribution {
   id: string;
   title: PluginScreenTitle;
+  /** Fleet screens own their server filter and aggregate connected hosts. */
+  scope?: "host" | "fleet";
   Component: ComponentType<PluginScreenProps>;
 }
 

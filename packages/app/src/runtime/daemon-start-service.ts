@@ -24,18 +24,33 @@ export async function upsertDesktopDaemonConnection(
   if (!serverId) {
     return { ok: false, error: "Desktop daemon did not return a server id." };
   }
-  if (store.getHosts().some((host) => host.serverId === serverId)) {
+  const registered = store.getHosts().find((host) => host.serverId === serverId);
+  // Preserve remote-only profiles, but refresh a managed local endpoint when
+  // its port/socket changes. Server identity alone does not make an address live.
+  if (
+    registered &&
+    (!daemon.listen ||
+      !registered.connections.some(
+        (connection) =>
+          connection.type === "directSocket" ||
+          (connection.type === "directTcp" &&
+            /^(localhost|127\.0\.0\.1|\[::1\]):/u.test(connection.endpoint)),
+      ))
+  )
     return { ok: true };
-  }
   const listenAddress = daemon.listen?.trim() ?? "";
   if (!listenAddress) {
     return { ok: false, error: "Desktop daemon did not return a listen address." };
   }
-  if (!connectionFromListen(listenAddress)) {
+  const connection = connectionFromListen(listenAddress);
+  if (!connection) {
     return {
       ok: false,
       error: `Desktop daemon returned an unsupported listen address: ${listenAddress}`,
     };
+  }
+  if (registered?.connections.some((existing) => existing.id === connection.id)) {
+    return { ok: true };
   }
   await store.upsertConnectionFromListen({
     listenAddress,

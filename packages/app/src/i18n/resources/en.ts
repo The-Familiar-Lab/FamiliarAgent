@@ -324,6 +324,7 @@ export const en = {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
+      forkOnAnotherHost: "Fork onto another host…",
       forkMenu: "Fork chat from here",
       forkInNewTab: "Fork in a new tab",
       forkInNewWorkspace: "Fork in a new workspace",
@@ -1226,7 +1227,7 @@ export const en = {
       discord: "Discord",
       github: "Create GitHub issue",
       whatsNew: "What's new",
-      appName: "Paseo",
+      appName: "FamiliarAgent",
     },
     sections: {
       sessions: "History",
@@ -1782,7 +1783,8 @@ export const en = {
     },
     remoteSsh: {
       title: "Remote SSH",
-      helper: "Connect to a Paseo daemon running on the remote host.",
+      helper:
+        "Enter an SSH alias or user@host. FamiliarAgent installs its private runtime automatically on Linux or macOS. Your existing SSH key and known host are used; first setup may take a few minutes.",
       fields: {
         target: "SSH host",
         password: "Daemon password",

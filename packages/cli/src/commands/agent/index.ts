@@ -1,3 +1,4 @@
+import { addForkOptions, runForkCommand } from "./fork.js";
 import { Command } from "commander";
 import { runModeCommand } from "./mode.js";
 import { addArchiveOptions, runArchiveCommand } from "./archive.js";
@@ -67,6 +68,10 @@ export function createAgentCommand(): Command {
 
   addJsonAndDaemonHostOptions(addWaitOptions(agent.command("wait"))).action(
     withOutput(runWaitCommand),
+  );
+
+  addJsonAndDaemonHostOptions(addForkOptions(agent.command("fork"))).action(
+    withOutput(runForkCommand),
   );
 
   // Advanced agent commands (less common operations)

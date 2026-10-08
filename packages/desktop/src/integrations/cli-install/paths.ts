@@ -3,14 +3,19 @@ import { createRequire } from "node:module";
 import { resolveCliShimPath } from "./path.js";
 import os from "node:os";
 import { app } from "electron";
+import { familiarPaths } from "../../features/familiar/paths.js";
 
 export function getLocalBinDir(): string {
   return path.join(os.homedir(), ".local", "bin");
 }
 
 export function getCliTargetPath(): string {
-  const filename = process.platform === "win32" ? "paseo.cmd" : "paseo";
+  const filename = process.platform === "win32" ? "familiar.cmd" : "familiar";
   return path.join(getLocalBinDir(), filename);
+}
+
+export function getStableCliTargetPath(): string {
+  return path.join(familiarPaths().bin, process.platform === "win32" ? "familiar.cmd" : "familiar");
 }
 
 export function getBundledCliShimPath(): string {

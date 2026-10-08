@@ -1,3 +1,4 @@
+import { FamiliarProviderSetup } from "@/components/familiar-provider-setup";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -456,6 +457,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         ) : null}
       </SettingsSection>
 
+      {hasServer && isConnected ? <FamiliarProviderSetup serverId={serverId} /> : null}
       {hasServer && isConnected ? (
         <SettingsSection
           title={t("settings.providers.addProvider")}

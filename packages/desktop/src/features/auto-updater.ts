@@ -144,6 +144,10 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
+    const feed = process.env.FAMILIAR_UPDATE_FEED;
+    if (!feed || new URL(feed).protocol !== "https:")
+      throw new Error("A verified HTTPS FamiliarAgent update feed is required.");
+    autoUpdater.setFeedURL({ provider: "generic", url: feed });
     autoUpdater.autoDownload = true;
     autoUpdater.autoRunAppAfterInstall = true;
     // Paseo revalidates the current manifest before explicitly installing on quit.
@@ -251,6 +255,17 @@ export async function checkForAppUpdate({
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
+  if (!process.env.FAMILIAR_UPDATE_FEED)
+    return {
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion,
+      latestVersion: currentVersion,
+      body: null,
+      date: null,
+      errorMessage:
+        "FamiliarAgent local builds use manual updates. An upstream Paseo release will not replace this app.",
+    };
   updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
   const result = await appUpdateService.checkForAppUpdate({
     currentVersion,
@@ -279,6 +294,12 @@ export async function downloadAndInstallUpdate(
   },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
+  if (!process.env.FAMILIAR_UPDATE_FEED)
+    return {
+      installed: false,
+      version: null,
+      message: "Install a verified FamiliarAgent build to update.",
+    };
   return appUpdateService.downloadAndInstallUpdate(
     { currentVersion, releaseChannel },
     onBeforeQuit,
@@ -303,5 +324,6 @@ export async function installAppUpdateOnQuit({
     return false;
   }
 
+  if (!process.env.FAMILIAR_UPDATE_FEED) return false;
   return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel, signal });
 }

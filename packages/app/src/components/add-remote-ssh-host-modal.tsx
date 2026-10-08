@@ -1,3 +1,6 @@
+import { Alert } from "react-native";
+import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { getDesktopHost } from "@/desktop/host";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -148,7 +151,9 @@ export function AddRemoteSshHostModal({
 
     let target: ReturnType<typeof parseSshTransportUri>;
     try {
-      target = parseSshTransportUri(rawTarget);
+      const uri = new URL(rawTarget.startsWith("ssh://") ? rawTarget : `ssh://${rawTarget}`);
+      if (!uri.searchParams.has("daemonPort")) uri.searchParams.set("daemonPort", "6787");
+      target = parseSshTransportUri(uri.toString());
     } catch {
       setErrorMessage(t("pairing.remoteSsh.errors.invalidTarget"));
       return;
@@ -158,15 +163,28 @@ export function AddRemoteSshHostModal({
     try {
       setIsSaving(true);
       setErrorMessage("");
+      if (getDesktopHost()) {
+        const setup = await invokeDesktopCommand<{ updateDeferred?: boolean }>(
+          "familiar_prepare_remote",
+          { ...target },
+        );
+        if (setup.updateDeferred)
+          Alert.alert(
+            "Server update deferred",
+            "Your existing sessions are preserved. This connection uses the previous runtime. Close its sessions and reconnect to install the new runtime.",
+          );
+      }
       result = await probeAndUpsertRemoteSshConnection({
         ...target,
         password: passwordRef.current === "" ? undefined : passwordRef.current,
       });
     } catch (error) {
+      const fallbackMessage =
+        error instanceof Error ? error.message : t("common.errors.unableToSave");
       const message =
         error instanceof DaemonConnectionTestError
           ? t("pairing.remoteSsh.errors.failedToConnect", { detail: error.message })
-          : t("common.errors.unableToSave");
+          : fallbackMessage;
       setErrorMessage(message);
       return;
     } finally {
@@ -233,7 +251,7 @@ export function AddRemoteSshHostModal({
           accessibilityLabel={t("pairing.remoteSsh.fields.target")}
           initialValue=""
           onChangeText={handleTargetChange}
-          placeholder="ssh://user@host"
+          placeholder="user@host · SSH alias · ssh://host:22"
           autoCapitalize="none"
           autoCorrect={false}
           editable={!isSaving}

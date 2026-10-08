@@ -574,7 +574,37 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
 export async function findDefaultCodexBinary(): Promise<string | null> {
   const pathBinary = await findExecutable("codex");
   if (pathBinary) return pathBinary;
+  if (process.platform === "darwin") return findCodexMacOSBinary();
   return await findCodexMicrosoftStoreBinary();
+}
+
+/** App installations need not expose their bundled CLI on the login shell's PATH. */
+export async function findCodexMacOSBinary(
+  applicationDirectories: readonly string[] = [
+    path.join(os.homedir(), "Applications"),
+    "/Applications",
+  ],
+): Promise<string | null> {
+  const bundleExecutables = [
+    ["Codex.app", "Contents", "Resources", "codex"],
+    [
+      "ChatGPT.app",
+      "Contents",
+      "Resources",
+      "codex-cli",
+      "CodexCLI.app",
+      "Contents",
+      "MacOS",
+      "codex",
+    ],
+  ];
+  for (const directory of applicationDirectories) {
+    for (const executable of bundleExecutables) {
+      const candidate = path.join(directory, ...executable);
+      if (await probeExecutable(candidate)) return candidate;
+    }
+  }
+  return null;
 }
 
 async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
@@ -3439,6 +3469,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   > | null = null;
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
+  private emptyThread: boolean;
   private currentTurnId: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
@@ -3545,6 +3576,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly allowEmptyThreadRecovery: boolean = false,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3559,6 +3591,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.providerOptions =
       validateProviderOptions("codex", CodexProviderOptionsSchema, config.providerOptions) ?? {};
     this.config = config;
+    this.emptyThread = !resumeHandle || resumeHandle.metadata?.emptyThread === true;
     this.harnessEnvironment = deps.environment ?? buildCodexAppServerEnv();
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
     this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
@@ -3648,8 +3681,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       await this.loadSkills();
 
       if (this.currentThreadId) {
+        const persistedThreadId = this.currentThreadId;
         await this.ensureThreadLoaded();
-        await this.loadPersistedHistory(this.client);
+        // Recovery just created a native thread, so it has no persisted turns to read.
+        if (this.currentThreadId === persistedThreadId)
+          await this.loadPersistedHistory(this.client);
         await this.applyDefaultModelAndThinking();
       }
 
@@ -4008,6 +4044,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
     }
     this.persistedHistory = timeline;
+    if (timeline.length) this.emptyThread = false;
     this.historyPending = timeline.length > 0;
   }
 
@@ -4083,6 +4120,24 @@ export class CodexAppServerAgentSession implements AgentSession {
     } catch (error) {
       const threadId = this.currentThreadId;
       const message = error instanceof Error ? error.message : String(error);
+      if (
+        this.allowEmptyThreadRecovery &&
+        this.emptyThread &&
+        message === `no rollout found for thread id ${threadId}`
+      ) {
+        this.currentThreadId = null;
+        this.cachedRuntimeInfo = null;
+        this.historyPending = false;
+        this.persistedHistory = [];
+        try {
+          await this.ensureThread();
+        } catch (startError) {
+          this.currentThreadId = threadId;
+          throw startError;
+        }
+        this.logger.info({ threadId }, "Reinitialized an explicitly unstarted Codex thread");
+        return;
+      }
       if (isArchivedCodexThreadResumeError(error, threadId)) {
         try {
           await this.client.request("thread/unarchive", { threadId });
@@ -4411,6 +4466,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (pendingStart.cancelRequested) {
         throw new Error("Codex turn start was interrupted before reaching Codex");
       }
+      this.prepareForTurn();
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
     } catch (error) {
@@ -4908,6 +4964,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
+  prepareForTurn(): void {
+    this.emptyThread = false;
+  }
+
   describePersistence(): {
     provider: typeof CODEX_PROVIDER;
     sessionId: string;
@@ -4925,6 +4985,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         cwd: this.config.cwd,
         title: this.config.title ?? null,
         threadId: this.currentThreadId,
+        emptyThread: this.emptyThread,
         modeId: this.config.modeId,
         model: this.config.model ?? null,
         thinkingOptionId,
@@ -5150,6 +5211,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.pendingManualCompactionStarts += 1;
       try {
+        this.prepareForTurn();
         await this.client.request("thread/compact/start", {
           threadId: this.currentThreadId,
         });
@@ -5178,6 +5240,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (!this.client || !this.currentThreadId) {
         throw new Error("Codex thread is not available");
       }
+      this.prepareForTurn();
       switch (subcommand.kind) {
         case "set": {
           await this.client.request("thread/goal/set", {
@@ -7319,6 +7382,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
+      options?.allowEmptyThreadRecovery === true,
     );
     await session.connect();
     return session;
