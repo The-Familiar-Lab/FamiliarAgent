@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/getpaseo/paseo",
+  "commit": "99fc204c55c8c1666477282eeba562ba87a3135f",
+  "license": "Apache-2.0",
+  "integration": "UI and runtime baseline; FamiliarAgent changes tracked in this repository"
+}
