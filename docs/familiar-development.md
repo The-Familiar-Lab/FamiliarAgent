@@ -11,10 +11,13 @@ Use Node.js 24 and npm from the product repository root. Both dependency trees h
 ```sh
 npm ci --no-audit --no-fund
 npm ci --prefix integrations/discord-connector --no-audit --no-fund
+npm run prisma:generate --prefix integrations/discord-connector -- --schema=prisma/schema.prisma
 npm run build:server
 npm run build --workspace=@getpaseo/expo-two-way-audio
 npm run verify:familiar -- --integration
 ```
+
+Generate the connector's Prisma client explicitly after installation: a prefix install can run its postinstall hook from a different initial directory and leave generic client stubs. `prisma:generate` creates the typed client from the committed schema; it does not migrate or open a database.
 
 Building the server also builds its shared packages and the CLI. The real MCP transport regression invokes that compiled CLI. The two-way audio package needs its declarations for app type checking. Run builds before verification; a concurrent clean build can remove outputs while another process is using them.
 
@@ -26,7 +29,7 @@ Reports and per-check logs are saved to `../work/familiar-verification/`, outsid
 
 `.github/workflows/ci.yml` runs **FamiliarAgent checks** on pushes to `main`, pull requests targeting `main`, merge queues and manual dispatch. It uses Ubuntu 24.04, Node.js 24, the two npm lockfiles, the builds above and the bounded verification runner. It needs no repository secrets. Its GitHub token has read-only repository contents access, and checkout does not persist Git credentials. New commits cancel superseded checks for the same pull request or ref.
 
-Verification logs are retained as a GitHub Actions artifact for seven days, including failed checks when logs exist. No app package is produced by this workflow. A passing check establishes the automated scope above; it does not establish that every external harness, account or operating system has been exercised.
+Verification logs are retained as a GitHub Actions artifact for seven days, including failed checks when logs exist. CI resolves their directory to an absolute path before upload; artifact path patterns cannot contain `..`. No app package is produced by this workflow. A passing check establishes the automated scope above; it does not establish that every external harness, account or operating system has been exercised.
 
 The inherited Paseo deployment, Docker publishing, release, rollout, EAS/mobile, desktop packaging and Nix-update workflows were removed from the active workflow directory. Their earlier contents remain in the baseline commit. The old `scripts/ci-workflow.test.mjs` was removed because it asserted that retired infrastructure. There is no automated website, relay, npm, container or application release publishing in the FamiliarAgent workflow.
 
