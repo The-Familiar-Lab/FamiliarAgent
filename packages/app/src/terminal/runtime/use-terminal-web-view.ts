@@ -11,7 +11,7 @@ export type OpenTerminalWebView = (
   view: TerminalWebView,
   browserId: string | undefined,
   signal: AbortSignal,
-) => Promise<string>;
+) => Promise<{ browserId: string; show: () => void }>;
 
 export function useTerminalWebView(input: {
   terminalId: string;
@@ -70,8 +70,12 @@ export function useTerminalWebView(input: {
     setOpening(true);
     setError(null);
     try {
-      const browserId = await open(current, registry.browserId(terminalId), controller.signal);
-      if (!controller.signal.aborted) registry.opened(terminalId, current.url, browserId);
+      const prepared = await open(current, registry.browserId(terminalId), controller.signal);
+      if (!controller.signal.aborted) {
+        // Record before changing focus: showing the browser can unmount this terminal.
+        registry.opened(terminalId, current.url, prepared.browserId);
+        prepared.show();
+      }
     } catch {
       // Transport errors may contain the private URL. Keep it out of UI/logs.
       if (!controller.signal.aborted)

@@ -109,13 +109,16 @@ afterEach(() => {
 describe("terminal panel original web view", () => {
   it("opens a private browser in the same workspace without replacing or closing its terminal", async () => {
     const open = mountTerminal();
-    await act(() => open(view, undefined, new AbortController().signal));
+    const prepared = await open(view, undefined, new AbortController().signal);
     expect(mocks.prepare).toHaveBeenCalledWith({
       serverId: "ssh-server",
       url: sourceUrl,
       preserveHost: true,
     });
     expect(mocks.createBrowser).toHaveBeenCalledWith({ initialUrl: forwardedUrl, ephemeral: true });
+    expect(prepared.browserId).toBe("new-browser");
+    expect(mocks.openTab).not.toHaveBeenCalled();
+    act(() => prepared.show());
     expect(mocks.openTab).toHaveBeenCalledWith({ kind: "browser", browserId: "new-browser" });
     expect(mocks.workspaceFields).toHaveBeenCalledWith(
       "ssh-server",
@@ -135,9 +138,12 @@ describe("terminal panel original web view", () => {
   it("updates a reused browser to the new SSH forwarding port before opening it", async () => {
     mocks.browsers.set("existing-browser", { url: sourceUrl });
     const open = mountTerminal();
-    await act(() => open(view, "existing-browser", new AbortController().signal));
+    const prepared = await open(view, "existing-browser", new AbortController().signal);
     expect(mocks.createBrowser).not.toHaveBeenCalled();
     expect(mocks.updateBrowser).toHaveBeenCalledWith("existing-browser", { url: forwardedUrl });
+    expect(prepared.browserId).toBe("existing-browser");
+    expect(mocks.openTab).not.toHaveBeenCalled();
+    act(() => prepared.show());
     expect(mocks.openTab).toHaveBeenCalledWith({ kind: "browser", browserId: "existing-browser" });
     expect(mocks.updateBrowser.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.openTab.mock.invocationCallOrder[0]!,

@@ -10,7 +10,7 @@ const output = new TextEncoder().encode(
 describe("terminal web view lifecycle", () => {
   it("opens when the terminal is selected, once across restore/remount, and can reopen explicitly", async () => {
     const registry = new TerminalWebViewRegistry();
-    const open = vi.fn().mockResolvedValue("browser-one");
+    const open = vi.fn().mockResolvedValue({ browserId: "browser-one", show: vi.fn() });
     const hook = renderHook(
       ({ active }) => useTerminalWebView({ terminalId: "term", registry, active, open }),
       { initialProps: { active: false } },
@@ -42,7 +42,7 @@ describe("terminal web view lifecycle", () => {
     expect(hook.result.current.error).not.toContain("test-private-key");
     act(() => hook.result.current.onRestore(output));
     expect(open).toHaveBeenCalledTimes(1);
-    open.mockResolvedValue("browser");
+    open.mockResolvedValue({ browserId: "browser", show: vi.fn() });
     await act(() => hook.result.current.openView());
     expect(hook.result.current.error).toBeNull();
   });
@@ -89,5 +89,23 @@ describe("terminal web view lifecycle", () => {
     expect(firstSignal.aborted).toBe(true);
     hook.rerender({ active: true });
     await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+  });
+  it("records the opened browser before focus navigation can unmount the terminal", async () => {
+    const registry = new TerminalWebViewRegistry();
+    let unmount = () => {};
+    const show = vi.fn(() => unmount());
+    const open = vi.fn().mockResolvedValue({ browserId: "browser-one", show });
+    const hook = renderHook(() =>
+      useTerminalWebView({ terminalId: "term", registry, active: true, open }),
+    );
+    unmount = hook.unmount;
+    act(() => hook.result.current.onOutput(output));
+    await waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    expect(registry.browserId("term")).toBe("browser-one");
+    const restored = renderHook(() =>
+      useTerminalWebView({ terminalId: "term", registry, active: true, open }),
+    );
+    act(() => restored.result.current.onRestore(output));
+    expect(open).toHaveBeenCalledTimes(1);
   });
 });

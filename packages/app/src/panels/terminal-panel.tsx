@@ -114,8 +114,7 @@ function TerminalPanel() {
       if (getBrowserRecord(browserId)?.url !== url) {
         useBrowserStore.getState().updateBrowser(browserId, { url });
       }
-      openTab({ kind: "browser", browserId });
-      return browserId;
+      return { browserId, show: () => openTab({ kind: "browser", browserId }) };
     },
     [serverId, openTab],
   );
