@@ -1,4 +1,5 @@
 export const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
+const PRIVATE_BROWSER_PROFILE_PREFIX = `${PASEO_BROWSER_PROFILE_PARTITION.slice("persist:".length)}-private-`;
 const LEGACY_BROWSER_ID_PATTERN =
   /^(?:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|\d{13,}-[0-9a-f]+)$/i;
 const MAX_LEGACY_BROWSER_PROFILES = 1000;
@@ -49,6 +50,19 @@ interface ElectronSessions {
 
 export function getPaseoBrowserProfileSession(sessions: ElectronSessions): BrowserProfileSession {
   return sessions.fromPartition(PASEO_BROWSER_PROFILE_PARTITION);
+}
+
+export function getEphemeralBrowserProfilePartition(browserId: string): string | null {
+  return LEGACY_BROWSER_ID_PATTERN.test(browserId)
+    ? `${PRIVATE_BROWSER_PROFILE_PREFIX}${browserId}`
+    : null;
+}
+
+export function isEphemeralBrowserProfilePartition(partition: string | undefined): boolean {
+  return Boolean(
+    partition?.startsWith(PRIVATE_BROWSER_PROFILE_PREFIX) &&
+    LEGACY_BROWSER_ID_PATTERN.test(partition.slice(PRIVATE_BROWSER_PROFILE_PREFIX.length)),
+  );
 }
 
 export function readLegacyPaseoBrowserIds(input: unknown): string[] {

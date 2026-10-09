@@ -299,12 +299,18 @@ export function prepareBrowserWebview(
     browserId: string;
     workspaceId: string;
     initialUrl?: string | null;
+    ephemeral?: boolean;
     profileHost?: BrowserWebviewProfileHost;
   },
 ): void {
   const browser = getBrowserBridge(input.profileHost);
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
-  webview.setAttribute("partition", browser.profilePartition);
+  // Electron partitions without persist: keep cookies, storage and cache in memory.
+  // Keep this identity aligned with getEphemeralBrowserProfilePartition in desktop.
+  const partition = input.ephemeral
+    ? `${browser.profilePartition.slice("persist:".length)}-private-${input.browserId}`
+    : browser.profilePartition;
+  webview.setAttribute("partition", partition);
   webview.setAttribute("allowpopups", "true");
   webview.setAttribute("spellcheck", "false");
   webview.setAttribute("autosize", "on");
@@ -318,6 +324,7 @@ export function ensureResidentBrowserWebview(input: {
   browserId: string;
   workspaceId: string;
   url: string;
+  ephemeral?: boolean;
   profileHost?: BrowserWebviewProfileHost;
 }): HTMLElement | null {
   const browserId = trimNonEmpty(input.browserId);
@@ -348,6 +355,7 @@ export function ensureResidentBrowserWebview(input: {
     browserId,
     workspaceId: input.workspaceId,
     initialUrl: input.url,
+    ephemeral: input.ephemeral,
     profileHost: input.profileHost,
   });
   releaseResidentBrowserWebview(browserId, webview);

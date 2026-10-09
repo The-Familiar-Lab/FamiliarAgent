@@ -50,6 +50,7 @@ if (active.has("desktop"))
     "packages/desktop/src/features/familiar",
     "packages/desktop/src/daemon/desktop-packaging.test.ts",
     "packages/desktop/src/daemon/quit-lifecycle.test.ts",
+    "packages/desktop/src/features/browser-webviews/index.test.ts",
   );
 // Directory discovery includes native/integrated/infrastructure adapters, tool-action
 // transport/store/service/result graphs and Hub UI regressions. Do not duplicate
@@ -110,6 +111,7 @@ if (active.has("app"))
       "src/screens/workspace/workspace-deck-retention.test.ts",
       "src/screens/new-workspace-terminal.test.ts",
       "src/panels/shared-session-banner.test.tsx",
+      "src/panels/terminal-panel.test.tsx",
       "src/panels/use-agent-detail-lookup.test.tsx",
       "src/workspace-tabs/launcher/launcher.test.tsx",
       "src/workspace-tabs/launcher/internal/familiar-context.test.ts",
@@ -117,6 +119,11 @@ if (active.has("app"))
       "src/workspace-tabs/launcher/internal/familiar-profile.test.ts",
       "src/components/familiar-tool-help.test.tsx",
       "src/terminal/runtime/terminal-stream-controller.test.ts",
+      "src/terminal/runtime/terminal-web-view.test.ts",
+      "src/terminal/runtime/use-terminal-web-view.test.tsx",
+      "src/terminal/runtime/workspace-terminal-session.test.ts",
+      "src/desktop/browser/store",
+      "src/desktop/browser/new-tab-requests/private.test.ts",
       "src/agent-stream/result-selection.test.ts",
       "src/components/connected-result-message.test.tsx",
       "src/composer/actions.test.ts",

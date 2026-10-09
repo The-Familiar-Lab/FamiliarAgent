@@ -25,18 +25,7 @@ export function usePluginHostNavigation(
         openWorkspace: navigateToWorkspace,
         createBrowser: createWorkspaceBrowser,
         openServers: () => router.push(buildSettingsAddHostRoute(Date.now())),
-        prepareBrowserUrl: ({ serverId: targetServerId, url }) => {
-          const registry = getHostRuntimeStore();
-          const state = registry.getSnapshot(targetServerId);
-          const configured = registry.getHosts().find((item) => item.serverId === targetServerId);
-          const sshEndpoint = publicSshHostConnection(state, configured?.connections);
-          const requiresSsh =
-            state?.activeConnection?.type === "remoteSsh" ||
-            !!configured?.connections.some((item) => item.type === "remoteSsh");
-          return preparePluginBrowserUrl({ url, sshEndpoint, requiresSsh }, (input) =>
-            invokeDesktopCommand<{ url: string }>("familiar_prepare_remote_web", input),
-          );
-        },
+        prepareBrowserUrl: prepareHostBrowserUrl,
         resolveWorkspace: ({ serverId: targetServerId, workspaceId }) =>
           resolveWorkspaceMapKeyByIdentity({
             workspaces: useSessionStore.getState().sessions[targetServerId]?.workspaces,
@@ -44,5 +33,26 @@ export function usePluginHostNavigation(
           }),
       }),
     [serverId],
+  );
+}
+
+export function prepareHostBrowserUrl({
+  serverId: targetServerId,
+  url,
+  preserveHost,
+}: {
+  serverId: string;
+  url: string;
+  preserveHost?: boolean;
+}): Promise<string> {
+  const registry = getHostRuntimeStore();
+  const state = registry.getSnapshot(targetServerId);
+  const configured = registry.getHosts().find((item) => item.serverId === targetServerId);
+  const sshEndpoint = publicSshHostConnection(state, configured?.connections);
+  const requiresSsh =
+    state?.activeConnection?.type === "remoteSsh" ||
+    !!configured?.connections.some((item) => item.type === "remoteSsh");
+  return preparePluginBrowserUrl({ url, sshEndpoint, requiresSsh, preserveHost }, (input) =>
+    invokeDesktopCommand<{ url: string }>("familiar_prepare_remote_web", input),
   );
 }

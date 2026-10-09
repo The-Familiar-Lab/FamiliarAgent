@@ -1,5 +1,8 @@
 import { webContents as allWebContents, type WebContents } from "electron";
-import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
+import {
+  isEphemeralBrowserProfilePartition,
+  PASEO_BROWSER_PROFILE_PARTITION,
+} from "../browser-profile.js";
 import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
   decideBrowserWindowOpenRequest,
@@ -36,12 +39,15 @@ interface AttachedBrowserRegistration {
 interface RegisterAttachedBrowserInput extends AttachedBrowserRegistration {
   sender: BrowserWebContentsIdentity;
   profileSession: object;
+  ephemeralSession?: object;
   findWebContents(webContentsId: number): RegisteredBrowserWebContents | null;
 }
 
 export function isPaseoBrowserWebviewAttach(input: { src?: string; partition?: string }): boolean {
   return (
-    isAllowedBrowserWebviewUrl(input.src) && input.partition === PASEO_BROWSER_PROFILE_PARTITION
+    isAllowedBrowserWebviewUrl(input.src) &&
+    (input.partition === PASEO_BROWSER_PROFILE_PARTITION ||
+      isEphemeralBrowserProfilePartition(input.partition))
   );
 }
 
@@ -68,7 +74,7 @@ export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput
     !guest ||
     guest.isDestroyed() ||
     guest.hostWebContents !== input.sender ||
-    guest.session !== input.profileSession
+    (guest.session !== input.profileSession && guest.session !== input.ephemeralSession)
   ) {
     return false;
   }

@@ -40,9 +40,10 @@ function useBrowserPanelDescriptor(target: {
   browserId: string;
 }): PanelDescriptor {
   const browser = useBrowserStore((state) => state.browsersById[target.browserId] ?? null);
-  const url = browser?.url ?? "https://example.com";
-  const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
-  const label = getBrowserLabel({ title: browser?.title ?? "", url });
+  const url = browser?.url ?? "";
+  // Fetching a private page's favicon in the app renderer would bypass its memory partition.
+  const icon = createBrowserTabIcon(browser?.ephemeral ? null : (browser?.faviconUrl ?? null));
+  const label = browser ? getBrowserLabel({ title: browser.title, url }) : "Closed browser view";
 
   return {
     label,

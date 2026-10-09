@@ -109,6 +109,30 @@ describe("remote native web forwarding", () => {
     ])
       expect(() => parseRemoteWeb({ ...source, sshEndpoint: endpoint })).toThrow();
   });
+  it("requires HTTP only for the optional original-Host proxy and isolates its lease", () => {
+    expect(() =>
+      parseRemoteWeb({ ...source, preserveHost: true, url: "https://localhost:9443" }),
+    ).toThrow("HTTP local");
+    expect(parseRemoteWeb({ ...source, preserveHost: true }).key).not.toBe(
+      parseRemoteWeb(source).key,
+    );
+    expect(parseRemoteWeb({ ...source, preserveHost: true }).key).not.toContain("A%2FB");
+  });
+  it("closes a proxy immediately when its SSH process exits and permits a new lease", async () => {
+    const f = fixture();
+    const input = { ...source, preserveHost: true };
+    const first = await f.forwards.prepare(input);
+    expect(new URL(first.url).pathname).toBe("/project");
+    expect(new URL(first.url).search).toBe("?id=A%2FB");
+    expect(new URL(first.url).hash).toBe("#chat");
+    f.processes[0]!.kill("SIGTERM");
+    await expect(fetch(first.url)).rejects.toThrow();
+    const second = await f.forwards.prepare(input);
+    expect(f.start).toHaveBeenCalledTimes(2);
+    f.forwards.close(input);
+    await Promise.resolve();
+    await expect(fetch(second.url)).rejects.toThrow();
+  });
   it("bounds live processes and permits explicit release", async () => {
     const f = fixture({ maxTunnels: 1 });
     await f.forwards.prepare(source);

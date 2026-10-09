@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyBrowserPatch,
   type BrowserIndexState,
+  type BrowserRecordPatch,
   createFixedBrowserViewport,
   createBrowserRecord,
   normalizeBrowserIndexState,
@@ -66,6 +67,22 @@ describe("createBrowserRecord", () => {
 });
 
 describe("applyBrowserPatch", () => {
+  it("cannot downgrade a private browser through a runtime patch", () => {
+    const initial = withRecords([
+      createBrowserRecord({
+        browserId: "private",
+        initialUrl: "localhost:3000",
+        now: 0,
+        ephemeral: true,
+      }),
+    ]);
+    const next = applyBrowserPatch(initial, "private", {
+      title: "Updated",
+      ephemeral: false,
+    } as BrowserRecordPatch);
+    expect(next.browsersById.private?.ephemeral).toBe(true);
+    expect(sanitizeBrowsersForPersist(next).browsersById).toEqual({});
+  });
   it("updates the browser's canonical viewport", () => {
     const initial = withRecords([
       createBrowserRecord({ browserId: "b1", initialUrl: "https://a.test", now: 0 }),

@@ -75,8 +75,8 @@ import {
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
+  getEphemeralBrowserProfilePartition,
   getLegacyPaseoBrowserProfileSession,
-  PASEO_BROWSER_PROFILE_PARTITION,
   getPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
@@ -228,13 +228,14 @@ function showBrowserWebviewContextMenu(
 
 function getBrowserPopupWindowOptions(
   mainWindow: BrowserWindow,
+  sourceSession: Electron.Session,
 ): Electron.BrowserWindowConstructorOptions {
   return {
     parent: mainWindow,
     show: true,
     autoHideMenuBar: true,
     webPreferences: {
-      partition: PASEO_BROWSER_PROFILE_PARTITION,
+      session: sourceSession,
       nodeIntegration: false,
       nodeIntegrationInSubFrames: false,
       nodeIntegrationInWorker: false,
@@ -269,7 +270,7 @@ function installBrowserWindowOpenHandler(input: {
     if (decision.kind === "popup") {
       return {
         action: "allow",
-        overrideBrowserWindowOptions: getBrowserPopupWindowOptions(mainWindow),
+        overrideBrowserWindowOptions: getBrowserPopupWindowOptions(mainWindow, contents.session),
       };
     }
 
@@ -420,16 +421,21 @@ ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => 
   if (!input) {
     throw new Error("Invalid attached browser registration");
   }
+  const profileSession = getPaseoBrowserProfileSession(session);
+  const guest = webContents.fromId(input.webContentsId);
+  const privatePartition = getEphemeralBrowserProfilePartition(input.browserId);
   const registered = registerAttachedPaseoBrowser({
     ...input,
     sender: event.sender,
-    profileSession: getPaseoBrowserProfileSession(session),
+    profileSession,
+    ...(guest?.session !== profileSession && privatePartition
+      ? { ephemeralSession: session.fromPartition(privatePartition, { cache: false }) }
+      : {}),
     findWebContents: (webContentsId) => webContents.fromId(webContentsId) ?? null,
   });
   if (!registered) {
     throw new Error("Attached browser registration was rejected");
   }
-  const guest = webContents.fromId(input.webContentsId);
   if (!guest) {
     throw new Error("Attached browser guest disappeared after registration");
   }

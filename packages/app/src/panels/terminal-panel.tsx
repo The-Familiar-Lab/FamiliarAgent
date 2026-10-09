@@ -6,6 +6,10 @@ import { Text, View } from "react-native";
 import invariant from "tiny-invariant";
 import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
+import { getIsElectron } from "@/constants/platform";
+import { createWorkspaceBrowser, getBrowserRecord, useBrowserStore } from "@/desktop/browser/store";
+import { prepareHostBrowserUrl } from "@/plugins/host-navigation";
+import type { OpenTerminalWebView } from "@/terminal/runtime/use-terminal-web-view";
 import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
@@ -76,7 +80,7 @@ function useTerminalPanelDescriptor(
 }
 
 function TerminalPanel() {
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, target, openFileInWorkspace, openTab } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
@@ -89,8 +93,32 @@ function TerminalPanel() {
     if (!workspaceDirectory) {
       return;
     }
-    openCompactFileExplorer({ serverId, cwd: workspaceDirectory, isGit: isGitCheckout });
+    openCompactFileExplorer({
+      serverId,
+      cwd: workspaceDirectory,
+      isGit: isGitCheckout,
+    });
   }, [isGitCheckout, openCompactFileExplorer, serverId, workspaceDirectory]);
+  const openWebView = useCallback<OpenTerminalWebView>(
+    async (view, existingBrowserId, signal) => {
+      const url = await prepareHostBrowserUrl({
+        serverId,
+        url: view.url,
+        preserveHost: view.preserveHost,
+      });
+      if (signal.aborted) throw new Error("Terminal view closed.");
+      const browserId =
+        existingBrowserId && getBrowserRecord(existingBrowserId)
+          ? existingBrowserId
+          : createWorkspaceBrowser({ initialUrl: url, ephemeral: true }).browserId;
+      if (getBrowserRecord(browserId)?.url !== url) {
+        useBrowserStore.getState().updateBrowser(browserId, { url });
+      }
+      openTab({ kind: "browser", browserId });
+      return browserId;
+    },
+    [serverId, openTab],
+  );
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {
@@ -108,6 +136,7 @@ function TerminalPanel() {
       terminalId={target.terminalId}
       isWorkspaceFocused={isWorkspaceFocused}
       isPaneFocused={isPaneFocused}
+      onOpenWebView={getIsElectron() ? openWebView : undefined}
       onOpenFileExplorer={handleOpenFileExplorer}
       onOpenWorkspaceFile={openFileInWorkspace}
     />

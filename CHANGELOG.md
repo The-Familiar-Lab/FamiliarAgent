@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.3
+
+- Pullboard's original ready web interface opens automatically inside the same project, including on SSH hosts. The original terminal keeps its process running; **Open Pullboard** reopens its view.
+- Restore, split output, duplicate announcements and reconnects use the same bounded readiness detection; cancelled navigation cannot steal focus after leaving the terminal.
+- Preserve Pullboard's Host/Origin checks through a loopback SSH proxy. Private view URLs and browser storage remain temporary.
+
 ## FamiliarAgent 0.16.2 — 2026-10-09
 
 - Isolated automatic project-icon discovery in bounded child processes, so an inaccessible folder cannot exhaust the daemon’s filesystem workers and stall tool/session reads.

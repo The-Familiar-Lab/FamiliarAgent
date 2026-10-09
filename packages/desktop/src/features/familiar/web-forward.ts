@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection, createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
+import { startLoopbackWebProxy } from "./web-proxy.js";
 import {
   parseSshTransportUri,
   validatePort,
@@ -9,7 +10,11 @@ import {
 } from "@getpaseo/protocol/ssh-transport";
 
 const inputSchema = z
-  .object({ sshEndpoint: z.string().max(4096), url: z.string().url().max(16384) })
+  .object({
+    sshEndpoint: z.string().max(4096),
+    url: z.string().url().max(16384),
+    preserveHost: z.boolean().optional(),
+  })
   .strict();
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const DEFAULT_LIMITS = {
@@ -22,6 +27,7 @@ interface Tunnel {
   port: number;
   close: () => void;
   alive: () => boolean;
+  onClose: (listener: () => void) => void;
 }
 interface ForwardTarget {
   ssh: SshTransportTarget;
@@ -29,6 +35,7 @@ interface ForwardTarget {
   remoteHost: string;
   url: URL;
   key: string;
+  preserveHost: boolean;
 }
 
 export function parseRemoteWeb(value: unknown): ForwardTarget {
@@ -46,8 +53,16 @@ export function parseRemoteWeb(value: unknown): ForwardTarget {
     );
   const remotePort = validatePort(url.port || (url.protocol === "https:" ? 443 : 80), "Web port");
   const remoteHost = url.hostname === "[::1]" ? "[::1]" : "127.0.0.1";
-  const key = JSON.stringify([ssh.host, ssh.sshPort ?? 22, remoteHost, remotePort]);
-  return { ssh, remotePort, remoteHost, url, key };
+  if (input.preserveHost && url.protocol !== "http:")
+    throw new Error("Origin-preserving web forwarding requires an HTTP local web app.");
+  const key = JSON.stringify([
+    ssh.host,
+    ssh.sshPort ?? 22,
+    remoteHost,
+    remotePort,
+    input.preserveHost ? url.origin : null,
+  ]);
+  return { ssh, remotePort, remoteHost, url, key, preserveHost: input.preserveHost ?? false };
 }
 
 export function remoteWebSshArgs(target: ForwardTarget, port: number): string[] {
@@ -143,9 +158,13 @@ export class RemoteWebForwards {
   async prepare(value: unknown): Promise<{ url: string }> {
     const target = parseRemoteWeb(value);
     let pending = this.tunnels.get(target.key);
-    if (pending && !(await pending).alive()) {
-      this.tunnels.delete(target.key);
-      pending = undefined;
+    if (pending) {
+      const previous = await pending;
+      if (!previous.alive()) {
+        previous.close();
+        this.tunnels.delete(target.key);
+        pending = undefined;
+      }
     }
     if (!pending) {
       if (this.tunnels.size >= this.limits.maxTunnels)
@@ -153,7 +172,7 @@ export class RemoteWebForwards {
           "Too many remote web connections. Close an unused remote web connection before opening another.",
         );
       const generation = this.generation;
-      pending = this.open(target).then((tunnel) => {
+      pending = this.openPrepared(target).then((tunnel) => {
         if (generation !== this.generation || this.tunnels.get(target.key) !== pending) {
           tunnel.close();
           throw new Error("Remote web connection was closed during startup");
@@ -191,6 +210,26 @@ export class RemoteWebForwards {
       );
     this.tunnels.clear();
   }
+  private async openPrepared(target: ForwardTarget): Promise<Tunnel> {
+    const tunnel = await this.open(target);
+    if (!target.preserveHost) return tunnel;
+    try {
+      const proxy = await startLoopbackWebProxy({ url: target.url, tunnelPort: tunnel.port });
+      tunnel.onClose(proxy.close);
+      return {
+        port: proxy.port,
+        alive: () => proxy.alive() && tunnel.alive(),
+        close: () => {
+          proxy.close();
+          tunnel.close();
+        },
+        onClose: tunnel.onClose,
+      };
+    } catch (error) {
+      tunnel.close();
+      throw error;
+    }
+  }
   private async open(target: ForwardTarget): Promise<Tunnel> {
     let lastError: Error = new Error("SSH web forwarding could not start");
     for (let attempt = 0; attempt < this.limits.bindAttempts; attempt++) {
@@ -226,7 +265,17 @@ export class RemoteWebForwards {
         ) {
           // ExitOnForwardFailure must also get a chance to report a bind race.
           await (this.dependencies.delay ?? delay)(this.limits.probeIntervalMs);
-          if (alive()) return { port, alive, close: () => stop(child) };
+          if (alive())
+            return {
+              port,
+              alive,
+              close: () => stop(child),
+              onClose: (listener) => {
+                child.once("exit", listener);
+                child.once("error", listener);
+                if (!alive()) listener();
+              },
+            };
           break;
         }
         await (this.dependencies.delay ?? delay)(this.limits.probeIntervalMs);

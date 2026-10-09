@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
+import {
+  getEphemeralBrowserProfilePartition,
+  PASEO_BROWSER_PROFILE_PARTITION,
+} from "../browser-profile.js";
 import {
   getPaseoBrowserIdForWebContents,
   getPaseoBrowserWorkspaceId,
@@ -44,6 +47,54 @@ class FakeBrowserGuest {
 }
 
 describe("browser webview attachment", () => {
+  test("accepts only valid private identities with the same safe URL policy", () => {
+    const partition = getEphemeralBrowserProfilePartition("d3ef6c77-4664-48df-9612-bae0e1d10f17");
+    expect(partition).toBe("paseo-browser-private-d3ef6c77-4664-48df-9612-bae0e1d10f17");
+    expect(
+      isPaseoBrowserWebviewAttach({
+        src: "http://127.0.0.1:3210/?token=fake",
+        partition: partition!,
+      }),
+    ).toBe(true);
+    expect(isPaseoBrowserWebviewAttach({ src: "file:///etc/passwd", partition: partition! })).toBe(
+      false,
+    );
+    expect(
+      isPaseoBrowserWebviewAttach({
+        src: "https://example.com",
+        partition: `persist:${partition}`,
+      }),
+    ).toBe(false);
+    expect(
+      isPaseoBrowserWebviewAttach({
+        src: "https://example.com",
+        partition: "paseo-browser-private-arbitrary",
+      }),
+    ).toBe(false);
+    expect(getEphemeralBrowserProfilePartition("../foreign")).toBeNull();
+  });
+
+  test("private registration still requires the exact browser session and renderer", () => {
+    const profileSession = {};
+    const privateSession = {};
+    const owner = new FakeRenderer(10);
+    const guest = new FakeBrowserGuest(1001, owner, privateSession);
+    const input = {
+      browserId: "d3ef6c77-4664-48df-9612-bae0e1d10f17",
+      workspaceId: "private-workspace",
+      webContentsId: guest.id,
+      sender: owner,
+      profileSession,
+      ephemeralSession: privateSession,
+      findWebContents: () => guest,
+    };
+    expect(registerAttachedPaseoBrowser({ ...input, ephemeralSession: {} })).toBe(false);
+    expect(registerAttachedPaseoBrowser({ ...input, sender: new FakeRenderer(11) })).toBe(false);
+    expect(registerAttachedPaseoBrowser(input)).toBe(true);
+    expect(getPaseoBrowserIdForWebContents(guest)).toBe(input.browserId);
+    unregisterPaseoBrowser(input.browserId);
+  });
+
   test("accepts only allowed URLs on the shared profile partition", () => {
     expect(
       isPaseoBrowserWebviewAttach({

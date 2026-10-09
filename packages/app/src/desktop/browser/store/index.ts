@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, type StateStorage } from "zustand/middleware";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import {
   applyBrowserPatch,
@@ -10,6 +10,7 @@ import {
   type BrowserRecord,
   type BrowserRecordPatch,
   type BrowserViewport,
+  type CreateBrowserInput,
   createBrowserRecord,
   normalizeBrowserIndexState,
   normalizeBrowserUrl,
@@ -26,7 +27,7 @@ export {
 } from "./state";
 
 interface BrowserStoreState extends BrowserIndexState {
-  createBrowser: (input?: { initialUrl?: string }) => string;
+  createBrowser: (input?: CreateBrowserInput) => string;
   updateBrowser: (browserId: string, patch: BrowserRecordPatch) => void;
   setBrowserViewport: (browserId: string, viewport: BrowserViewport) => void;
   removeBrowser: (browserId: string) => void;
@@ -43,48 +44,56 @@ function createBrowserId(): string {
   return BrowserAutomationBrowserIdSchema.parse(browserId);
 }
 
-export const useBrowserStore = create<BrowserStoreState>()(
-  persist(
-    (set) => ({
-      browsersById: {},
-      createBrowser: (input) => {
-        const browserId = createBrowserId();
-        const record = createBrowserRecord({
-          browserId,
-          initialUrl: input?.initialUrl,
-          now: Date.now(),
-        });
+export function createBrowserStore(storage: StateStorage = AsyncStorage) {
+  return create<BrowserStoreState>()(
+    persist(
+      (set) => ({
+        browsersById: {},
+        createBrowser: (input) => {
+          const browserId = createBrowserId();
+          const record = createBrowserRecord({
+            browserId,
+            initialUrl: input?.initialUrl,
+            ephemeral: input?.ephemeral,
+            now: Date.now(),
+          });
 
-        set((state) => ({
-          browsersById: {
-            ...state.browsersById,
-            [browserId]: record,
-          },
-        }));
+          set((state) => ({
+            browsersById: {
+              ...state.browsersById,
+              [browserId]: record,
+            },
+          }));
 
-        return browserId;
-      },
-      updateBrowser: (browserId, patch) => {
-        set((state) => applyBrowserPatch(state, browserId, patch));
-      },
-      setBrowserViewport: (browserId, viewport) => {
-        set((state) => applyBrowserPatch(state, browserId, { viewport }));
-      },
-      removeBrowser: (browserId) => {
-        set((state) => removeBrowserFromIndex(state, browserId));
-      },
-    }),
-    {
-      name: "workspace-browser-store",
-      storage: createValidatedPersistStorage(AsyncStorage, BrowserIndexStateSchema),
-      partialize: (state) => sanitizeBrowsersForPersist(state),
-      merge: (persistedState, currentState) => ({
-        ...currentState,
-        ...normalizeBrowserIndexState(persistedState),
+          return browserId;
+        },
+        updateBrowser: (browserId, patch) => {
+          set((state) => applyBrowserPatch(state, browserId, patch));
+        },
+        setBrowserViewport: (browserId, viewport) => {
+          set((state) => applyBrowserPatch(state, browserId, { viewport }));
+        },
+        removeBrowser: (browserId) => {
+          set((state) => removeBrowserFromIndex(state, browserId));
+        },
       }),
-    },
-  ),
-);
+      {
+        name: "workspace-browser-store",
+        storage: createValidatedPersistStorage(storage, BrowserIndexStateSchema),
+        partialize: (state) => sanitizeBrowsersForPersist(state),
+        merge: (persistedState, currentState) => ({
+          ...currentState,
+          browsersById: {
+            ...normalizeBrowserIndexState(persistedState).browsersById,
+            ...currentState.browsersById,
+          },
+        }),
+      },
+    ),
+  );
+}
+
+export const useBrowserStore = createBrowserStore();
 
 export function getBrowserRecord(browserId: string): BrowserRecord | null {
   const normalizedBrowserId = trimNonEmpty(browserId);
@@ -94,7 +103,7 @@ export function getBrowserRecord(browserId: string): BrowserRecord | null {
   return useBrowserStore.getState().browsersById[normalizedBrowserId] ?? null;
 }
 
-export function createWorkspaceBrowser(input?: { initialUrl?: string }): {
+export function createWorkspaceBrowser(input?: CreateBrowserInput): {
   browserId: string;
   url: string;
 } {

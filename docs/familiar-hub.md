@@ -82,3 +82,11 @@ The earlier release validation includes actual Mac Codex and Ubuntu Claude using
 The initial live fork manifest was 1,155 bytes; this is one measured case, not a constant size guarantee. Resource measurements and passing fixtures do not establish every tool/account combination. An authorized message sent through the signed-in Discord UI completed Gateway → Mac relay → Ubuntu Codex → Discord, with a delivered receipt and matching native reply. This verifies that conversation path, not every Discord command or tool combination. User-provided ChatGPT exports and closed harness internals require separate validation.
 
 Provider-private heap state, model KV caches, credentials and unpublished orchestration checkpoints are not portable across arbitrary tools. Original source files and the owning server remain necessary for uncopied history.
+
+## Pullboard live view
+
+Launching Pullboard with **Open terminal** keeps the original `pullboard view --no-open` process alive. Once it announces readiness, FamiliarAgent opens its original web UI as a browser tab in that same project. No URL copying is required. This also works on SSH hosts: the desktop reuses the selected SSH profile and retains the original service's Host/Origin and private-key checks.
+
+Return to the terminal and choose **Open Pullboard** to reopen the view. A failed connection shows a retry action without exposing the private URL. Terminal exit stops the original service; closing only its browser tab does not stop it. Private view URLs, page storage and cache are not persisted by the browser; after restarting FamiliarAgent, reopen the original terminal to discover a running service again. Original terminal output retention is unchanged.
+
+Automatic readiness detection currently recognizes Pullboard's explicit ready announcement. Unrelated URLs printed by agents, documents or terminal commands are not automatically opened. Original web interfaces registered by URL retain their existing manual **Open browser** path.

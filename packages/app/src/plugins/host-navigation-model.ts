@@ -3,8 +3,17 @@ import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-worksp
 import { isHttpUrl } from "@/utils/http-url";
 
 export async function preparePluginBrowserUrl(
-  input: { url: string; sshEndpoint?: string; requiresSsh: boolean },
-  forward: (input: { url: string; sshEndpoint: string }) => Promise<{ url: string }>,
+  input: {
+    url: string;
+    sshEndpoint?: string;
+    requiresSsh: boolean;
+    preserveHost?: boolean;
+  },
+  forward: (input: {
+    url: string;
+    sshEndpoint: string;
+    preserveHost?: boolean;
+  }) => Promise<{ url: string }>,
 ): Promise<string> {
   if (!isHttpUrl(input.url)) throw new Error("Only absolute HTTP(S) URLs are supported.");
   const url = new URL(input.url);
@@ -12,7 +21,11 @@ export async function preparePluginBrowserUrl(
   if (!loopback || !input.requiresSsh) return input.url;
   if (!input.sshEndpoint)
     throw new Error("Reconnect this server over SSH before opening its local web app.");
-  const result = await forward({ sshEndpoint: input.sshEndpoint, url: input.url });
+  const result = await forward({
+    sshEndpoint: input.sshEndpoint,
+    url: input.url,
+    ...(input.preserveHost ? { preserveHost: true } : {}),
+  });
   if (!isHttpUrl(result.url))
     throw new Error("SSH forwarding did not return a usable web address.");
   const prepared = new URL(result.url);
@@ -46,29 +59,49 @@ export function createPluginHostNavigation(
       workspaceId: input.workspaceId,
     });
     if (!destinationWorkspaceId) throw new Error("Workspace is unavailable on the requested host.");
-    return { serverId: destinationServerId, workspaceId: destinationWorkspaceId };
+    return {
+      serverId: destinationServerId,
+      workspaceId: destinationWorkspaceId,
+    };
   }
   return {
     openServers: owner.openServers,
     openTerminal: ({ terminalId, ...input }) => {
       if (!terminalId.trim()) throw new Error("terminalId is required.");
-      owner.openWorkspace({ ...workspace(input), target: { kind: "terminal", terminalId } });
+      owner.openWorkspace({
+        ...workspace(input),
+        target: { kind: "terminal", terminalId },
+      });
     },
     openAgent: ({ agentId, serverId: targetServerId }) =>
       owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
     openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
-      owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
+      owner.openWorkspace({
+        serverId: targetServerId ?? serverId,
+        workspaceId,
+      }),
     openBrowser: owner.browserAvailable
       ? ({ url, workspaceId, serverId: targetServerId }) => {
           if (!isHttpUrl(url)) throw new Error("Only absolute HTTP(S) URLs are supported.");
-          const destination = workspace({ serverId: targetServerId, workspaceId });
+          const destination = workspace({
+            serverId: targetServerId,
+            workspaceId,
+          });
           const open = (preparedUrl: string) => {
             if (!isHttpUrl(preparedUrl))
               throw new Error("Only absolute HTTP(S) URLs are supported.");
             // A workspace can be removed while an SSH tunnel is being prepared.
-            const current = workspace({ serverId: targetServerId, workspaceId });
-            const { browserId } = owner.createBrowser({ initialUrl: preparedUrl });
-            owner.openWorkspace({ ...current, target: { kind: "browser", browserId } });
+            const current = workspace({
+              serverId: targetServerId,
+              workspaceId,
+            });
+            const { browserId } = owner.createBrowser({
+              initialUrl: preparedUrl,
+            });
+            owner.openWorkspace({
+              ...current,
+              target: { kind: "browser", browserId },
+            });
           };
           if (owner.prepareBrowserUrl)
             return owner.prepareBrowserUrl({ serverId: destination.serverId, url }).then(open);

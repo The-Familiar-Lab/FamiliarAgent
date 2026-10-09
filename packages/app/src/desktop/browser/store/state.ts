@@ -8,6 +8,8 @@ export const RESPONSIVE_BROWSER_VIEWPORT: BrowserViewport = { mode: "responsive"
 
 export interface BrowserRecord {
   browserId: string;
+  /** Private local tool URLs live only for this app session. */
+  ephemeral?: boolean;
   url: string;
   title: string;
   isLoading: boolean;
@@ -19,7 +21,14 @@ export interface BrowserRecord {
   createdAt: number;
 }
 
-export type BrowserRecordPatch = Partial<Omit<BrowserRecord, "browserId" | "createdAt">>;
+export type BrowserRecordPatch = Partial<
+  Omit<BrowserRecord, "browserId" | "createdAt" | "ephemeral">
+>;
+
+export interface CreateBrowserInput {
+  initialUrl?: string;
+  ephemeral?: boolean;
+}
 
 export interface BrowserIndexState {
   browsersById: Record<string, BrowserRecord>;
@@ -36,6 +45,7 @@ const BrowserViewportSchema = z.discriminatedUnion("mode", [
 
 const BrowserRecordSchema = z.strictObject({
   browserId: z.string(),
+  ephemeral: z.boolean().optional(),
   url: z.string(),
   title: z.string(),
   isLoading: z.boolean(),
@@ -76,7 +86,13 @@ function browserViewportsEqual(left: BrowserViewport, right: BrowserViewport): b
 
 export function normalizeBrowserIndexState(value: unknown): BrowserIndexState {
   const result = BrowserIndexStateSchema.safeParse(value);
-  return result.success ? result.data : { browsersById: {} };
+  return result.success
+    ? {
+        browsersById: Object.fromEntries(
+          Object.entries(result.data.browsersById).filter(([, browser]) => !browser.ephemeral),
+        ),
+      }
+    : { browsersById: {} };
 }
 
 export function trimNonEmpty(value: string | null | undefined): string | null {
@@ -107,10 +123,12 @@ export function normalizeBrowserUrl(value: string | null | undefined): string {
 export function createBrowserRecord(input: {
   browserId: string;
   initialUrl: string | null | undefined;
+  ephemeral?: boolean;
   now: number;
 }): BrowserRecord {
   return {
     browserId: input.browserId,
+    ...(input.ephemeral ? { ephemeral: true } : {}),
     url: normalizeBrowserUrl(input.initialUrl),
     title: "",
     isLoading: false,
@@ -143,6 +161,7 @@ export function applyBrowserPatch<S extends BrowserIndexState>(
   const nextRecord: BrowserRecord = {
     ...existing,
     ...patch,
+    ...(existing.ephemeral ? { ephemeral: true } : {}),
     viewport: nextViewport,
     url: normalizeBrowserUrl(patch.url ?? existing.url),
   };
@@ -190,10 +209,12 @@ export function sanitizeBrowsersForPersist(state: BrowserIndexState): {
 } {
   return {
     browsersById: Object.fromEntries(
-      Object.entries(state.browsersById).map(([browserId, browser]) => [
-        browserId,
-        { ...browser, isLoading: false, lastError: null },
-      ]),
+      Object.entries(state.browsersById)
+        .filter(([, browser]) => !browser.ephemeral)
+        .map(([browserId, browser]) => [
+          browserId,
+          { ...browser, isLoading: false, lastError: null },
+        ]),
     ),
   };
 }

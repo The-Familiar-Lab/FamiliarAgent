@@ -1,3 +1,4 @@
+import { TerminalWebViewRegistry } from "./terminal-web-view";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 
 export interface WorkspaceTerminalSnapshots {
@@ -10,6 +11,7 @@ export interface WorkspaceTerminalSnapshots {
 export interface WorkspaceTerminalSession {
   scopeKey: string;
   snapshots: WorkspaceTerminalSnapshots;
+  webViews: TerminalWebViewRegistry;
 }
 
 interface WorkspaceTerminalSessionRecord {
@@ -22,6 +24,7 @@ const refCountByScopeKey = new Map<string, number>();
 
 function createSnapshots(input: {
   snapshotByTerminalId: Map<string, TerminalState>;
+  webViews: TerminalWebViewRegistry;
 }): WorkspaceTerminalSnapshots {
   return {
     get: ({ terminalId }) => input.snapshotByTerminalId.get(terminalId) ?? null,
@@ -32,6 +35,7 @@ function createSnapshots(input: {
       input.snapshotByTerminalId.delete(terminalId);
     },
     prune: ({ terminalIds }) => {
+      input.webViews.prune(terminalIds);
       const terminalIdSet = new Set(terminalIds);
       for (const terminalId of Array.from(input.snapshotByTerminalId.keys())) {
         if (!terminalIdSet.has(terminalId)) {
@@ -49,10 +53,13 @@ export function getWorkspaceTerminalSession(input: { scopeKey: string }): Worksp
   }
 
   const snapshotByTerminalId = new Map<string, TerminalState>();
+  const webViews = new TerminalWebViewRegistry();
   const session: WorkspaceTerminalSession = {
+    webViews,
     scopeKey: input.scopeKey,
     snapshots: createSnapshots({
       snapshotByTerminalId,
+      webViews,
     }),
   };
 

@@ -12,7 +12,11 @@ export interface BuiltinTool {
   nativeProvider?: string;
   desktopApp?: string;
   desktopOpensFolder?: boolean;
-  install?: { kind: "npm" | "python" | "native"; package: string; with?: string[] };
+  install?: {
+    kind: "npm" | "python" | "native";
+    package: string;
+    with?: string[];
+  };
   notes?: string[];
 }
 
@@ -31,7 +35,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     install: { kind: "npm", package: "pullboard@0.8.1" },
     notes: [
       "Requires Node.js 22.13 or newer and Git. Initialize a selected Git project through Run actions; installation never changes project hooks or documents.",
-      "Open terminal starts the original loopback board view. Its private link stays in that terminal. Pullboard does not call a model; original agents own the work and verification.",
+      "Open terminal starts the original loopback board view. FamiliarAgent opens the ready web view in a private browser tab inside the same project, including SSH hosts. Pullboard does not call a model; original agents own the work and verification.",
     ],
   },
   {

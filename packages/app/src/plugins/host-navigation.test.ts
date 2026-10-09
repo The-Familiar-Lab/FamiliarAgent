@@ -43,6 +43,26 @@ describe("plugin host navigation", () => {
     ).rejects.toThrow("SSH failed");
     expect(calls).toHaveLength(1);
   });
+  it("requests Host preservation only for explicit original web views", async () => {
+    let forwarded: unknown;
+    await preparePluginBrowserUrl(
+      {
+        url: "http://127.0.0.1:43123/?k=test-key",
+        requiresSsh: true,
+        sshEndpoint: "ssh://server?daemonPort=6787",
+        preserveHost: true,
+      },
+      async (input) => {
+        forwarded = input;
+        return { url: "http://127.0.0.1:50000/?k=test-key" };
+      },
+    );
+    expect(forwarded).toEqual({
+      url: "http://127.0.0.1:43123/?k=test-key",
+      sshEndpoint: "ssh://server?daemonPort=6787",
+      preserveHost: true,
+    });
+  });
   function setup(electron = true) {
     const destinations: unknown[] = [];
     const browsers: string[] = [];

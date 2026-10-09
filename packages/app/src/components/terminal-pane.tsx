@@ -1,3 +1,7 @@
+import {
+  useTerminalWebView,
+  type OpenTerminalWebView,
+} from "@/terminal/runtime/use-terminal-web-view";
 import { TerminalFind, type TerminalPaneFindHandle } from "@/terminal/find";
 import type { TerminalFindResult } from "@/terminal/runtime/terminal-emulator-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -94,6 +98,7 @@ interface TerminalPaneProps {
   terminalId: string;
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
+  onOpenWebView?: OpenTerminalWebView;
   onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
 }
@@ -224,6 +229,33 @@ function KeyboardToggleButton({
   );
 }
 
+function TerminalWebViewBanner({
+  state,
+  enabled,
+}: {
+  state: ReturnType<typeof useTerminalWebView>;
+  enabled: boolean;
+}) {
+  if (!enabled || !state.view) return null;
+  return (
+    <View style={styles.webViewRow}>
+      <Text style={styles.webViewText}>
+        {state.error ?? `${state.view.title} is running in this terminal.`}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${state.view.title}`}
+        disabled={state.opening}
+        onPress={state.openView}
+      >
+        <Text style={styles.webViewLink}>
+          {state.opening ? "Opening…" : `Open ${state.view.title}`}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export function TerminalPane({
   serverId,
   cwd,
@@ -231,6 +263,7 @@ export function TerminalPane({
   isWorkspaceFocused,
   isPaneFocused,
   onOpenFileExplorer,
+  onOpenWebView,
   onOpenWorkspaceFile,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
@@ -244,7 +277,10 @@ export function TerminalPane({
     return trimmed.length > 0 ? trimmed : undefined;
   }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
-  const showVirtualKeyBar = shouldShowTerminalVirtualKeyBar({ isNative, isCompact: isMobile });
+  const showVirtualKeyBar = shouldShowTerminalVirtualKeyBar({
+    isNative,
+    isCompact: isMobile,
+  });
   const [keyBarWidth, setKeyBarWidth] = useState(0);
   const virtualKeyboardRows = resolveTerminalVirtualKeyboardRows({
     isCompact: isMobile,
@@ -286,6 +322,12 @@ export function TerminalPane({
     () => getWorkspaceTerminalSession({ scopeKey }),
     [scopeKey],
   );
+  const webView = useTerminalWebView({
+    terminalId,
+    registry: workspaceTerminalSession.webViews,
+    active: isTerminalPresented && isPaneFocused,
+    open: onOpenWebView,
+  });
   const [isAttaching, setIsAttaching] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [rendererReadyStreamKey, setRendererReadyStreamKey] = useState<string | null>(null);
@@ -311,7 +353,9 @@ export function TerminalPane({
   const keyboardRefitTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastAutoFocusKeyRef = useRef<string | null>(null);
   const paneFocusResizeClaimRef = useRef(EMPTY_FOCUS_CLAIM_STATE);
-  const initialSnapshot = workspaceTerminalSession.snapshots.get({ terminalId });
+  const initialSnapshot = workspaceTerminalSession.snapshots.get({
+    terminalId,
+  });
 
   useEffect(() => {
     terminalIdRef.current = terminalId;
@@ -487,6 +531,8 @@ export function TerminalPane({
   );
 
   const handleStreamExit = useStableEvent((exitedTerminalId: string) => {
+    workspaceTerminalSession.webViews.clear(exitedTerminalId);
+    if (terminalIdRef.current === exitedTerminalId) webView.onExit();
     workspaceTerminalSession.snapshots.clear({ terminalId: exitedTerminalId });
     if (terminalIdRef.current === exitedTerminalId) emulatorRef.current?.clear();
     setModifiers({ ...EMPTY_MODIFIERS });
@@ -523,26 +569,34 @@ export function TerminalPane({
       if (terminalIdRef.current !== outputTerminalId) {
         return;
       }
+      webView.onOutput(data);
       emulatorRef.current?.writeOutput(data);
     },
   );
 
   const handleStreamRestore = useStableEvent(
     ({ terminalId: restoreTerminalId, data }: { terminalId: string; data: Uint8Array }) => {
-      workspaceTerminalSession.snapshots.clear({ terminalId: restoreTerminalId });
+      workspaceTerminalSession.snapshots.clear({
+        terminalId: restoreTerminalId,
+      });
       if (terminalIdRef.current !== restoreTerminalId) {
         return;
       }
+      webView.onRestore(data);
       emulatorRef.current?.restoreOutput(data);
     },
   );
 
   const handleStreamSnapshot = useStableEvent(
     ({ terminalId: snapshotTerminalId, state }: { terminalId: string; state: TerminalState }) => {
-      workspaceTerminalSession.snapshots.set({ terminalId: snapshotTerminalId, state });
+      workspaceTerminalSession.snapshots.set({
+        terminalId: snapshotTerminalId,
+        state,
+      });
       if (terminalIdRef.current !== snapshotTerminalId) {
         return;
       }
+      webView.onSnapshot(state);
       emulatorRef.current?.renderSnapshot(state);
     },
   );
@@ -859,7 +913,10 @@ export function TerminalPane({
       rows: Math.floor(input.rows),
       cols: Math.floor(input.cols),
     };
-    measuredTerminalSizeRef.current = { rows: nextResize.rows, cols: nextResize.cols };
+    measuredTerminalSizeRef.current = {
+      rows: nextResize.rows,
+      cols: nextResize.cols,
+    };
     terminalResizeDebouncer.schedule(nextResize);
   });
 
@@ -947,7 +1004,10 @@ export function TerminalPane({
 
   const toggleModifier = useCallback(
     (modifier: keyof ModifierState) => {
-      setModifiers((current) => ({ ...current, [modifier]: !current[modifier] }));
+      setModifiers((current) => ({
+        ...current,
+        [modifier]: !current[modifier],
+      }));
       requestTerminalFocus();
       requestTerminalReflow();
     },
@@ -1124,6 +1184,8 @@ export function TerminalPane({
         ) : null}
       </View>
 
+      <TerminalWebViewBanner state={webView} enabled={Boolean(onOpenWebView)} />
+
       {streamError ? (
         <View style={styles.errorRow}>
           <Text style={styles.statusError} numberOfLines={2}>
@@ -1181,6 +1243,23 @@ const styles = StyleSheet.create((theme) => ({
     right: theme.spacing[3],
     bottom: theme.spacing[12],
     zIndex: 2,
+  },
+  webViewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    padding: theme.spacing[2],
+    backgroundColor: theme.colors.surface1,
+  },
+  webViewText: {
+    flex: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  webViewLink: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
   },
   errorRow: {
     paddingHorizontal: theme.spacing[3],

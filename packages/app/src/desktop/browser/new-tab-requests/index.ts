@@ -3,6 +3,7 @@ import { getDesktopHost, type DesktopBrowserNewTabRequestEvent } from "@/desktop
 import { collectAllTabs, type WorkspaceLayout } from "@/stores/workspace-layout-store";
 import { getIsElectron } from "@/constants/platform";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { getBrowserRecord } from "@/desktop/browser/store";
 
 export type BrowserNewTabRequest = DesktopBrowserNewTabRequestEvent;
 
@@ -68,7 +69,7 @@ export function resolveBrowserNewTabRequest(input: {
 export function useDesktopBrowserNewTabRequests(input: {
   enabled: boolean;
   workspaceLayout: WorkspaceLayout | null | undefined;
-  openUrl: (url: string) => void;
+  openUrl: (url: string, options?: { ephemeral?: boolean }) => void;
 }): void {
   const handleNewTabRequest = useStableEvent((payload: unknown) => {
     const request = resolveBrowserNewTabRequest({
@@ -78,7 +79,11 @@ export function useDesktopBrowserNewTabRequests(input: {
     if (!request) {
       return;
     }
-    input.openUrl(request.url);
+    const source = getBrowserRecord(request.sourceBrowserId);
+    if (!source) {
+      return;
+    }
+    input.openUrl(request.url, { ephemeral: source.ephemeral === true });
   });
 
   useEffect(() => {

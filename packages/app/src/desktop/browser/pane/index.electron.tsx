@@ -597,6 +597,7 @@ export function BrowserPane({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
+  const browserExists = browser !== null;
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const setBrowserViewport = useBrowserStore((state) => state.setBrowserViewport);
   const browserViewport = browser?.viewport ?? RESPONSIVE_BROWSER_VIEWPORT;
@@ -720,7 +721,7 @@ export function BrowserPane({
   }, []);
 
   useEffect(() => {
-    if (!isElectronRuntime()) {
+    if (!isElectronRuntime() || !browserExists) {
       return;
     }
 
@@ -733,7 +734,7 @@ export function BrowserPane({
     host.replaceChildren();
 
     const initialUnsafeNavigationMessage = getUnsafeNavigationMessage(
-      initialUrlRef.current,
+      browserRef.current?.url ?? initialUrlRef.current,
       browserErrorLabelsRef.current,
     );
     const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
@@ -743,7 +744,10 @@ export function BrowserPane({
       prepareBrowserWebview(webview, {
         browserId,
         workspaceId,
-        initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
+        ephemeral: browserRef.current?.ephemeral,
+        initialUrl: initialUnsafeNavigationMessage
+          ? "about:blank"
+          : (browserRef.current?.url ?? initialUrlRef.current),
       });
     }
     releaseResidentBrowserWebview(browserId, webview);
@@ -907,7 +911,7 @@ export function BrowserPane({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, onFocusPane]);
+  }, [browserId, browserExists, onFocusPane]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -1422,6 +1426,18 @@ export function BrowserPane({
   const setWebviewClipNode = useCallback((node: unknown) => {
     webviewClipRef.current = node instanceof HTMLElement ? node : null;
   }, []);
+
+  if (!browserExists) {
+    return (
+      <View style={styles.unavailableState}>
+        <Text style={titleStyle}>This browser session is no longer available</Text>
+        <Text style={subtitleStyle}>
+          Private tool views are not restored after restarting the app. Reopen the tool from its
+          terminal to continue.
+        </Text>
+      </View>
+    );
+  }
 
   if (!isElectronRuntime()) {
     return (

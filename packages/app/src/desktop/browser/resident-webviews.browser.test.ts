@@ -35,6 +35,7 @@ function ensureTestBrowser(input: {
   browserId: string;
   workspaceId: string;
   url: string;
+  ephemeral?: boolean;
 }): HTMLElement | null {
   return ensureResidentBrowserWebview({ ...input, profileHost });
 }
@@ -100,6 +101,39 @@ describe("resident browser webviews", () => {
 
   afterEach(() => {
     clearResidentBrowserWebviewsForTests();
+  });
+
+  it("keeps private webviews in separate memory partitions across tab parking", () => {
+    const first = ensureTestBrowser({
+      browserId: "private-first",
+      workspaceId: "w1",
+      url: "http://localhost:3210/?token=fake",
+      ephemeral: true,
+    });
+    const second = ensureTestBrowser({
+      browserId: "private-second",
+      workspaceId: "w1",
+      url: "http://localhost:3210",
+      ephemeral: true,
+    });
+    expect(first?.getAttribute("partition")).toBe("paseo-browser-private-private-first");
+    expect(second?.getAttribute("partition")).not.toBe(first?.getAttribute("partition"));
+    expect(first?.getAttribute("partition")).not.toMatch(/^persist:/);
+    if (!first) throw new Error("Expected private webview");
+    const parent = first.parentElement;
+    releaseResidentBrowserWebview("private-first", first);
+    expect(takeResidentBrowserWebview("private-first")).toBe(first);
+    expect(first.parentElement).toBe(parent);
+    expect(first.isConnected).toBe(true);
+    expect(
+      ensureTestBrowser({
+        browserId: "private-first",
+        workspaceId: "w1",
+        url: "https://example.com",
+        ephemeral: true,
+      }),
+    ).toBe(first);
+    expect((first as HTMLElement & { src: string }).src).toContain("token=fake");
   });
 
   it("parks a browser webview in the permanent paintable 1x1 host", () => {
