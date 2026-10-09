@@ -166,4 +166,24 @@ describe("createAssistantMarkdownParser", () => {
 
     expect(parser.render("[x](javascript:alert(1))")).not.toContain("href");
   });
+
+  it.each([true, false])(
+    "keeps assistant file links without admitting active content when streaming=%s",
+    (streaming) => {
+      const parser = createAssistantMarkdownParser({ streaming });
+      expect(parser.renderInline("[source](file:///tmp/example.ts)")).toBe(
+        '<a href="file:///tmp/example.ts">source</a>',
+      );
+      expect(parser.renderInline("<script>alert(1)</script>")).toBe(
+        "&lt;script&gt;alert(1)&lt;/script&gt;",
+      );
+      for (const source of [
+        "[x](jav&#x61;script:alert(1))",
+        "[x](data:text/html;base64,PHNjcmlwdD4=)",
+        "![x](data:image/svg+xml;base64,PHN2Zz4=)",
+      ]) {
+        expect(parser.renderInline(source)).not.toMatch(/<(?:a|img)\b/u);
+      }
+    },
+  );
 });

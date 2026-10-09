@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createMarkdownParser } from "./markdown-parser";
 
 // Every string markdown-it's typographer would rewrite, with the character it
-// would rewrite it to. Sourced from markdown-it/lib/rules_core/replacements.js
-// and smartquotes.js. `--flag` is deliberately absent: the en-dash rules need
+// would rewrite it to. Sourced from markdown-it/lib/rules_core/replacements.mjs
+// and smartquotes.mjs. `--flag` is deliberately absent: the en-dash rules need
 // whitespace or a word character on both sides, so a CLI flag after a space is
 // never touched and asserting on it would prove nothing.
 const REWRITTEN_BY_TYPOGRAPHER = [
@@ -13,8 +13,6 @@ const REWRITTEN_BY_TYPOGRAPHER = [
   "(R)",
   "(tm)",
   "(TM)",
-  "(p)",
-  "(P)",
   "+-",
   "two dots .. here",
   "wait for it...",
@@ -68,8 +66,35 @@ describe("createMarkdownParser", () => {
       createMarkdownParser({ linkify: false }).render("see https://paseo.sh now"),
     ).not.toContain("href");
   });
+
+  it.each([true, false])("keeps raw HTML inert with linkify=%s", (linkify) => {
+    const parser = createMarkdownParser({ linkify });
+    const source = '<script>alert(1)</script> <img src=x onerror="alert(1)">';
+    expect(parser.renderInline(source)).toBe(escapeHtml(source));
+    expect(parser.render("```html\n" + source + "\n```")).toContain(escapeHtml(source));
+    expect(parser.render("**Safe text** and [docs](https://example.com)")).toContain(
+      '<strong>Safe text</strong> and <a href="https://example.com">docs</a>',
+    );
+  });
+
+  it.each([true, false])("rejects encoded active-content links with linkify=%s", (linkify) => {
+    const parser = createMarkdownParser({ linkify });
+    for (const source of [
+      "[x](JaVaScRiPt:alert(1))",
+      "[x](jav&#x61;script:alert(1))",
+      "[x](vbscript:msgbox(1))",
+      "[x](data:text/html;base64,PHNjcmlwdD4=)",
+      "![x](data:image/svg+xml;base64,PHN2Zz4=)",
+    ]) {
+      expect(parser.renderInline(source)).not.toMatch(/<(?:a|img)\b/u);
+    }
+  });
 });
 
 function escapeHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }

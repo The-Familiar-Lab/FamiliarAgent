@@ -60,6 +60,7 @@ if (active.has("server"))
     "packages/server/src/server/agent/providers/codex-app-server-agent.test.ts",
     "packages/server/src/server/agent/agent-manager.test.ts",
     "packages/server/src/server/agent/provider-registry.test.ts",
+    "packages/server/src/server/agent/chat-search/index.test.ts",
   );
 if (active.has("app"))
   tests.push(
@@ -82,6 +83,9 @@ if (active.has("app"))
       "src/plugins/host-navigation.test.ts",
       "src/plugins/host-navigation.test.tsx",
       "src/panels/shared-session-banner.test.tsx",
+      "src/utils/markdown-parser.test.ts",
+      "src/utils/assistant-markdown-parser.test.ts",
+      "src/utils/__tests__/split-markdown-blocks.test.ts",
       "--maxWorkers=2",
     ],
     path.join(root, "packages/app"),

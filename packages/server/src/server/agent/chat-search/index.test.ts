@@ -86,3 +86,19 @@ it("counts occurrences per rendered block rather than across block boundaries", 
   // neither does a match, however contiguous the Markdown source looks.
   expect((await searchTimeline({ rows: source, query: "one target" })).locations).toEqual([]);
 });
+
+it("searches escaped HTML as visible text while excluding valid link destinations", async () => {
+  const source = rows([
+    {
+      type: "assistant_message",
+      text: "<script>literal-content</script>\n\n[visible **label**](https://example.com/hidden-destination)",
+    },
+  ]);
+  for (const query of ["<script>", "literal-content", "visible label"])
+    expect((await searchTimeline({ rows: source, query })).locations).toEqual([
+      { seq: 1, role: "assistant", count: 1 },
+    ]);
+  expect((await searchTimeline({ rows: source, query: "hidden-destination" })).locations).toEqual(
+    [],
+  );
+});

@@ -13,8 +13,11 @@ First FamiliarAgent integration layer on the pinned Paseo 0.11.1 baseline. Entri
 
 - Fixed restart recovery of explicitly unstarted Codex sessions using the actual durable registry, retaining the logical identity and launch configuration. Unknown or used missing histories remain errors.
 - Avoided native provider calls when reading an already verified empty history boundary.
+- Updated the shipped WebSocket, MCP, HTTP, Markdown and updater dependencies; replaced the server's UUID package with Node.js UUID generation.
+- Remote updates now stage the current workspace packages and locked dependencies together, verify startup, and restore the previous runtime after a failed replacement. Existing user configuration is preserved.
+- Markdown uses the current parser's link syntax: wrap destinations containing spaces in angle brackets; backslash-space reference destinations are treated as text.
 
-Verified the installed macOS app and Ubuntu runtime, including the Hub fork action and model/thinking configuration, plus 906 local tests, types, lint and daemon transports. Catalog entries do not imply complete interoperability with every external harness feature; see the [Hub guide](docs/familiar-hub.md) and [development guide](docs/familiar-development.md).
+Verified the installed macOS app and Ubuntu runtime, including the Hub fork action and model/thinking configuration, plus 1,008 local tests, types, lint and daemon transports. Catalog entries do not imply complete interoperability with every external harness feature; see the [Hub guide](docs/familiar-hub.md) and [development guide](docs/familiar-development.md).
 
 ## 0.11.1 - 2026-10-07
 

@@ -1,7 +1,17 @@
 const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } = require("node:fs");
+const {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  mkdtempSync,
+  rmSync,
+} = require("node:fs");
+const { tmpdir } = require("node:os");
 const path = require("node:path");
+const { buildRuntimeDependencies } = require("./runtime-dependencies.cjs");
 const directory = path.resolve(__dirname, "../assets/familiar");
 async function main() {
   const { pathToFileURL } = require("node:url");
@@ -41,20 +51,26 @@ async function main() {
   });
   writeDiscordNotices(discordBundle.metafile);
   const archive = path.join(directory, "runtime.tgz");
-  execFileSync(
-    "tar",
-    [
-      ...(process.platform === "darwin" ? ["--no-xattrs", "--no-mac-metadata"] : []),
-      "-czf",
-      archive,
-      "--exclude=*.map",
-      "-C",
-      path.resolve(__dirname, "../.."),
-      "server/dist",
-      "cli/dist",
-    ],
-    { env: { ...process.env, COPYFILE_DISABLE: "1" } },
-  );
+  const runtime = mkdtempSync(path.join(tmpdir(), "familiar-runtime-package-"));
+  try {
+    buildRuntimeDependencies(path.resolve(__dirname, "../../.."), runtime);
+    execFileSync(
+      "tar",
+      [
+        ...(process.platform === "darwin" ? ["--no-xattrs", "--no-mac-metadata"] : []),
+        "-czf",
+        archive,
+        "-C",
+        runtime,
+        "package.json",
+        "package-lock.json",
+        "workspace-packages",
+      ],
+      { env: { ...process.env, COPYFILE_DISABLE: "1" } },
+    );
+  } finally {
+    rmSync(runtime, { recursive: true, force: true });
+  }
   writeFileSync(
     path.join(directory, "runtime.sha256"),
     createHash("sha256").update(readFileSync(archive)).digest("hex") + "\n",

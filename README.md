@@ -4,7 +4,7 @@ FamiliarAgent connects existing agent tools, conversations and project folders a
 
 The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, terminals, editor, file explorer, Git worktrees, browser panels and plugin system. FamiliarAgent adds the integration layer; it is a separate project and is not an official Paseo release.
 
-**Current version: 0.12.0.** The installed macOS app and Ubuntu runtime have passed the documented session-switching, pointer-fork, original-history and restart-recovery scenarios. Local verification passed 906 tests, type checks, lint and daemon transport checks. This is a development distribution; see the scope and account-specific limits in the Hub guide.
+**Current version: 0.12.0.** The installed macOS app and Ubuntu runtime have passed the documented session-switching, pointer-fork, original-history and restart-recovery scenarios. Local verification passed 1,008 tests, type checks, lint and daemon transport checks. This is a development distribution; see the scope and account-specific limits in the Hub guide.
 
 - [Using Familiar Hub](docs/familiar-hub.md)
 - [Development, verification and source history](docs/familiar-development.md)

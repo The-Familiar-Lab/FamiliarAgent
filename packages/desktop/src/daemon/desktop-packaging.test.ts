@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -64,6 +65,18 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("selects the npm lockfile so packaging honors production dependency overrides", () => {
+    const workspaceRoot = join(packageRoot, "..", "..");
+    const pkg = JSON.parse(readFileSync(join(workspaceRoot, "package.json"), "utf8")) as {
+      packageManager?: string;
+    };
+
+    // A different package manager forces builder's fallback traversal, which
+    // rejects patched dependencies outside the original package's semver range.
+    expect(pkg.packageManager?.split("@")[0] ?? "npm").toBe("npm");
+    expect(existsSync(join(workspaceRoot, "package-lock.json"))).toBe(true);
+  });
+
   it("uses an Electron runtime whose Squirrel handoff explicitly wakes ShipIt", () => {
     const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
       devDependencies?: Record<string, string>;

@@ -9,7 +9,6 @@ import { z } from "zod";
 export const REMOTE_SETUP_TIMEOUT_MS = 20 * 60 * 1000;
 const OUTPUT_LIMIT = 24 * 1024;
 const NODE_VERSION = "22.20.0";
-const DAEMON_VERSION = "0.11.1";
 const inputSchema = z
   .object({
     host: z
@@ -21,8 +20,7 @@ const inputSchema = z
   })
   .strict();
 
-export function remoteSetupArgs(input: unknown): string[] {
-  const target = inputSchema.parse(input);
+function sshConnectionArgs(target: z.infer<typeof inputSchema>): string[] {
   const args = [
     "-T",
     "-o",
@@ -37,16 +35,20 @@ export function remoteSetupArgs(input: unknown): string[] {
     "ServerAliveCountMax=3",
   ];
   if (target.sshPort) args.push("-p", String(target.sshPort));
-  args.push(
-    validateSshHost(target.host),
+  args.push(validateSshHost(target.host));
+  return args;
+}
+
+export function remoteSetupArgs(input: unknown): string[] {
+  const target = inputSchema.parse(input);
+  return [
+    ...sshConnectionArgs(target),
     "sh",
     "-s",
     "--",
     String(validatePort(target.daemonPort, "Server port")),
     NODE_VERSION,
-    DAEMON_VERSION,
-  );
-  return args;
+  ];
 }
 
 const installations = new Map<string, Promise<{ output: string; updateDeferred?: boolean }>>();
@@ -67,7 +69,8 @@ async function installRemote(
   input: unknown,
   scriptPath: string,
 ): Promise<{ output: string; updateDeferred?: boolean }> {
-  const args = remoteSetupArgs(input);
+  const target = inputSchema.parse(input);
+  const args = remoteSetupArgs(target);
   const directory = path.dirname(scriptPath);
   const hash = (await readFile(path.join(directory, "runtime.sha256"), "utf8")).trim();
   if (!/^[a-f0-9]{64}$/u.test(hash))
@@ -76,7 +79,7 @@ async function installRemote(
   const base = await runSsh(args, Readable.from([script]));
   const overlay = await readFile(path.join(directory, "apply-runtime.sh"), "utf8");
   const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-  const uploadArgs = [...args.slice(0, -6), `sh -c ${quote(overlay)} sh ${hash}`];
+  const uploadArgs = [...sshConnectionArgs(target), `sh -c ${quote(overlay)} sh ${hash}`];
   const applied = await runSsh(uploadArgs, createReadStream(path.join(directory, "runtime.tgz")));
   return {
     output: base.output + applied.output,

@@ -98,9 +98,10 @@ describe("splitMarkdownBlocks", () => {
     ]);
   });
 
-  it("recognizes every destination the renderer accepts, including escaped spaces", () => {
+  it("leaves rejected escaped-space destinations literal and recognizes angle-bracketed spaces", () => {
     expect(splitMarkdownBlocks("See [docs].\n\n[docs]: docs\\ folder/readme")).toEqual([
-      "See [docs].\n\n[docs]: docs\\ folder/readme",
+      "See [docs].",
+      "[docs]: docs\\ folder/readme",
     ]);
     expect(splitMarkdownBlocks("See [docs].\n\n[docs]: <docs folder/readme> 'Title'")).toEqual([
       "See [docs].\n\n[docs]: <docs folder/readme> 'Title'",

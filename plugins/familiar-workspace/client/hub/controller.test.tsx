@@ -349,14 +349,14 @@ describe("Familiar Hub action wiring", () => {
             ...project.resources[0]!,
             id: "linux-code",
             serverId: "linux",
-            locator: "/home/mingi/project",
+            locator: "/home/developer/project",
           },
         ],
       });
       result.current.setCwd("/project");
     });
     await act(async () => result.current.setTarget("linux"));
-    expect(result.current.cwd).toBe("/home/mingi/project");
+    expect(result.current.cwd).toBe("/home/developer/project");
     await act(async () => result.current.setTarget("mac"));
     expect(result.current.cwd).toBe("/project");
     await act(async () => result.current.setTarget("unmapped-server"));
@@ -372,9 +372,9 @@ describe("Familiar Hub action wiring", () => {
     expect(result.current.cwd).toBe("/worktrees/existing");
     await act(async () => {
       result.current.setTarget("linux");
-      result.current.setCwd("/home/mingi/chosen-worktree");
+      result.current.setCwd("/home/developer/chosen-worktree");
     });
-    expect(result.current.cwd).toBe("/home/mingi/chosen-worktree");
+    expect(result.current.cwd).toBe("/home/developer/chosen-worktree");
   });
   it("loads models for a registered Antigravity provider instead of silently omitting it", async () => {
     const { result } = renderHook(() => useHubController(props));

@@ -8,6 +8,8 @@ The first commit, `7171e0f` (`Import pinned Paseo baseline for FamiliarAgent`), 
 
 Use Node.js 24 and npm from the product repository root. Both dependency trees have committed npm lockfiles; the Discord connector is intentionally installed separately from the root workspaces.
 
+Desktop packaging also uses the root npm lockfile. Keep package-manager metadata consistent with that choice: an inherited pnpm declaration selects the wrong dependency collector, whose fallback rejects security overrides that intentionally replace an upstream dependency range. The npm collector uses the installed, override-aware dependency graph.
+
 ```sh
 npm ci --no-audit --no-fund
 npm ci --prefix integrations/discord-connector --no-audit --no-fund
@@ -46,6 +48,18 @@ npm run build:desktop -- --dir --mac --arm64
 This exports the web UI, compiles the desktop host, builds the server/CLI, bundles the built-in plugins and Discord bridge, and packages the remote runtime. The app output is `packages/desktop/release/mac-arm64/FamiliarAgent.app`. Validate that bundle, quit the installed app, and replace `/Applications/FamiliarAgent.app`; do not create another renamed backup app. Keep the current installed app until the replacement has built successfully. Rebuilding overwrites the build output, while Git preserves the source revision. Remove the disposable build bundle after the installed version has passed its final checks.
 
 The current development macOS package is ad-hoc signed and is not notarized for public distribution. A source tag does not imply an Apple-signed release.
+
+## Remote runtime packaging
+
+The remote bundle contains npm archives of the current CLI/server and their internal workspace dependencies, with a generated npm lockfile. External direct versions come from the root lockfile; scoped dependency overrides come from the root package manifest. Internal packages must resolve to the bundled archives. Generating the remote lock can access the npm registry, and its integrity-pinned result travels with the bundle. It does not mutate the product lockfile.
+
+On the target host, setup prepares Node.js and a user-scoped launcher. An update installs the bundle's dependencies in a private staging directory while the existing server remains available. The installer checks retained agent states before staging and again before stopping, then replaces the complete runtime and verifies the daemon's workspace API. A failed replacement restores the prior runtime and build digest. User state is outside this transaction.
+
+The final idle check and daemon shutdown are separate operations; they do not provide an atomic admission lock against a new turn starting in that interval. Updates should be applied while work is idle. The installer rejects a pending recovery directory rather than overwriting it, and a verified unchanged bundle needs no dependency download.
+
+The 0.12.0 dependency check covered the actual Mac bundle and installed Ubuntu runtime, not just the monorepo's production-labelled dependency graph. No matching known advisories remained in their physically included package versions in the checked npm audit snapshots. The separately generated portable runtime lock also passed `npm audit --omit=dev`. This is a dated package check, not a complete security audit; inherited website, mobile and development dependency graphs still have findings.
+
+AI SDK is pinned to 5.0.220: it includes the provider-utils advisory fix without introducing the vulnerable Undici 5/busboy 2 chain found in the newer 5.0.273 release. The app's development-only WebSocket constraint retains the compatible upstream Wrangler placement; the desktop, server, CLI and relay use WebSocket 8.22.0. The server uses Node.js UUID generation instead of the additional UUID package.
 
 ## Daily changes and releases
 
