@@ -1,4 +1,5 @@
 import { ASSISTANT_IMAGE_DEFAULT_ASPECT_RATIO } from "@/utils/assistant-image-metadata";
+import { ConnectedResultMessage, parseConnectedResultInput } from "./connected-result-message";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { TaskListRow } from "@/components/task-list-row";
 import {
@@ -464,6 +465,18 @@ export const UserMessage = memo(function UserMessage({
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const getMessageContent = useCallback(() => message, [message]);
+  const connectedResult = useMemo(() => parseConnectedResultInput(message), [message]);
+  const messageText = connectedResult ? (
+    <ConnectedResultMessage
+      value={connectedResult}
+      raw={message}
+      textStyle={userMessageStylesheet.text}
+    />
+  ) : (
+    <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
+      {message}
+    </Text>
+  );
   const handleRewind = useCallback(
     (input: { mode: RewindMode; rewoundText: string }) => {
       return rewindMutation.rewindAgent(input);
@@ -544,11 +557,7 @@ export const UserMessage = memo(function UserMessage({
               })}
             </View>
           ) : null}
-          {hasText ? (
-            <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
-              {message}
-            </Text>
-          ) : null}
+          {hasText ? messageText : null}
         </View>
         {hasText ? (
           <View
@@ -585,6 +594,7 @@ interface AssistantTurnFooterProps {
   completedAt?: Date;
   durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
+  onUseResult?: () => void;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -602,6 +612,11 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   },
   labelWrapper: {
     position: "relative",
+  },
+  resultAction: {
+    color: theme.colors.foregroundMuted,
+    fontSize: STREAM_METADATA_FONT_SIZE,
+    padding: theme.spacing[1],
   },
   labelSizer: {
     color: theme.colors.foregroundMuted,
@@ -629,6 +644,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   onFork,
+  onUseResult,
 }: AssistantTurnFooterProps) {
   const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
@@ -686,6 +702,15 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
       {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+      {onUseResult ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Use result…"
+          onPress={onUseResult}
+        >
+          <Text style={assistantTurnFooterStylesheet.resultAction}>Use result…</Text>
+        </Pressable>
+      ) : null}
       {primaryLabel ? (
         <Pressable
           onPress={handlePress}

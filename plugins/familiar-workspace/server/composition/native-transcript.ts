@@ -12,7 +12,11 @@ const MAX_SOURCE_DIRECTORIES = 10000;
 export class NativeTranscriptUnavailableError extends Error {}
 
 /** Locate by provider-native identity, so moving a Codex thread to archived_sessions keeps its reference. */
-async function findTranscript(source: "Codex" | "Claude", nativeId: string) {
+export async function findTranscript(
+  source: "Codex" | "Claude",
+  nativeId: string,
+  signal?: AbortSignal,
+) {
   if (!/^[a-f0-9-]{36}$/iu.test(nativeId))
     throw new Error("Invalid provider-native transcript identity");
   const root =
@@ -25,6 +29,7 @@ async function findTranscript(source: "Codex" | "Claude", nativeId: string) {
       : [path.join(root, "projects")];
   let visited = 0;
   while (pending.length) {
+    signal?.throwIfAborted();
     if (++visited > MAX_SOURCE_DIRECTORIES)
       throw new Error("Native transcript search exceeded its directory limit");
     const directory = pending.shift()!;

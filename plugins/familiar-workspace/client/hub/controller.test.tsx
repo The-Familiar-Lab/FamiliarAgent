@@ -165,6 +165,59 @@ afterEach(cleanup);
 const calls = (name: string) =>
   mocks.rpc.mock.calls.filter(([, contract]) => contract.name === name);
 describe("Familiar Hub action wiring", () => {
+  it("uses the frozen target choice when recovery changes the visible title, folder and model", async () => {
+    const { result } = renderHook(() => useHubController(props));
+    await act(async () => {
+      result.current.setCwd("/chosen-folder");
+      result.current.setTitle("Chosen name");
+    });
+    await waitFor(() => expect(result.current.modelId).toBe("model"));
+    const selection = result.current.nativeTargetSelection();
+    await act(async () => {
+      result.current.setTitle("Session");
+      result.current.setCwd("/normalized-folder");
+      result.current.setModelId("different-model");
+    });
+    await act(async () => {
+      await result.current.createNativeTarget(project, session, {
+        resultInput: true,
+        idempotencyKey: "one-operation",
+        selection,
+      });
+    });
+    expect(mocks.createAgent.mock.calls[0]?.[0]).toMatchObject({
+      cwd: "/chosen-folder",
+      title: "Chosen name",
+      config: { provider: "codex/model" },
+      idempotencyKey: "one-operation",
+    });
+    expect(calls("composition.bind")[0]?.[2]).toMatchObject({
+      endpoint: { model: "model", harness: "codex", serverId: "mac" },
+    });
+  });
+  it("creates a result target in the same logical session without automatically adding recent history or sending", async () => {
+    const { result } = renderHook(() => useHubController(props));
+    await act(async () => {
+      result.current.setCwd("/project");
+    });
+    await waitFor(() => expect(result.current.modelId).toBe("model"));
+    let created: Awaited<ReturnType<typeof result.current.createNativeTarget>> | undefined;
+    await act(async () => {
+      created = await result.current.createNativeTarget(project, session, {
+        resultInput: true,
+        idempotencyKey: "selected-result-target",
+      });
+    });
+    expect(created?.session.id).toBe(session.id);
+    const options = mocks.createAgent.mock.calls[0]?.[0];
+    expect(options.labels).toEqual({ familiarProject: project.id, familiarSession: session.id });
+    expect(options.config.systemPrompt).toContain("specifically selected source response");
+    expect(options.config.systemPrompt).not.toContain("Bounded working context");
+    expect(options.prompt).toBeUndefined();
+    expect(options.idempotencyKey).toBe("selected-result-target");
+    expect(mocks.openAgent).not.toHaveBeenCalled();
+    expect(calls("composition.create")).toHaveLength(0);
+  });
   it("creates a shared logical session before first external launch and passes its reference to the tool", async () => {
     const { result } = renderHook(() => useHubController(props));
     await act(async () => result.current.setCwd("/project"));

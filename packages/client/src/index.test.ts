@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterEach, expect, test, vi } from "vitest";
-import { createPaseoApi, createPaseoClient } from "./index.js";
+import { AgentMessageSendError, createPaseoApi, createPaseoClient } from "./index.js";
 import { DaemonClient } from "./daemon-client.js";
 import type { PaseoAgent, PaseoClient, PaseoWorkspace } from "./index.js";
 
@@ -149,6 +149,82 @@ function acknowledgeObservation(ws: FakeWebSocket, subscriptionId: string): void
     }),
   );
 }
+
+test.each(["rejected", "unknown", undefined] as const)(
+  "reject-if-busy uses a fail-closed operation and preserves delivery state %s",
+  async (deliveryState) => {
+    const { client, ws } = await connectClient();
+    try {
+      const send = client.agents.ref("target").send("result", {
+        messageId: "edge",
+        activeTurnBehavior: "reject",
+      });
+      const request = parseSentSessionMessage(ws.sent.at(-1));
+      expect(request).toMatchObject({
+        type: "send_agent_message_if_idle_request",
+        messageId: "edge",
+        activeTurnBehavior: "reject",
+      });
+      ws.message(
+        sessionMessage({
+          type: "send_agent_message_response",
+          payload: {
+            requestId: request.requestId,
+            agentId: "target",
+            accepted: false,
+            error: "busy or uncertain",
+            ...(deliveryState ? { deliveryState } : {}),
+            code: "agent_busy",
+          },
+        }),
+      );
+      await expect(send).rejects.toBeInstanceOf(AgentMessageSendError);
+      await expect(send).rejects.toMatchObject({
+        deliveryState: deliveryState ?? "unknown",
+        code: "agent_busy",
+      });
+      expect(ws.sent.map(parseSentFrame).filter((frame) => "message" in frame)).toHaveLength(1);
+    } finally {
+      client.dispose();
+    }
+  },
+);
+
+test.each(["absent", "pending", "completed", "rejected"] as const)(
+  "reads a %s message receipt without replaying the original payload",
+  async (state) => {
+    const { client, ws } = await connectClient();
+    try {
+      const receipt = client.agents
+        .ref("target")
+        .messageReceipt("edge", { text: "result", activeTurnBehavior: "reject" });
+      const request = parseSentSessionMessage(ws.sent.at(-1));
+      expect(request).toMatchObject({
+        type: "agent.message_receipt.request",
+        agentId: "target",
+        messageId: "edge",
+        text: "result",
+        activeTurnBehavior: "reject",
+      });
+      ws.message(
+        sessionMessage({
+          type: "agent.message_receipt.response",
+          payload: {
+            requestId: request.requestId,
+            agentId: "target",
+            messageId: "edge",
+            receipt: { state, error: null, code: null },
+            error: null,
+          },
+        }),
+      );
+      await expect(receipt).resolves.toEqual({ state, error: null, code: null });
+      expect(ws.sent.map(parseSentFrame).filter((frame) => "message" in frame)).toHaveLength(1);
+    } finally {
+      client.dispose();
+    }
+  },
+);
 
 async function observeAgents(client: PaseoClient, ws: FakeWebSocket): Promise<string> {
   const ready = client.agents.list({ subscribe: {} });

@@ -663,6 +663,54 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
+test.each(["pending", "running"] as const)(
+  "reject-if-busy preserves a %s run, including slash commands, without steering or interrupting",
+  async (phase) => {
+    const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession() {
+            return session;
+          }
+        })(),
+      },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = manager.streamAgent(agent.id, "original");
+    let draining: Promise<void> | undefined;
+    const outOfBand = vi.spyOn(manager, "tryRunOutOfBand");
+    try {
+      if (phase === "running") {
+        draining = drainAsyncGenerator(run);
+        await manager.waitForAgentRunStart(agent.id);
+      }
+      await expect(
+        startAgentRun(manager, agent.id, "/goal pause", logger, {
+          replaceRunning: true,
+          activeTurnBehavior: "reject",
+          runOptions: { clientMessageId: "result-edge" },
+        }),
+      ).rejects.toMatchObject({ code: "agent_busy" });
+      expect(outOfBand).not.toHaveBeenCalled();
+      expect(session.interruptCount).toBe(0);
+      expect(session.steerCount).toBe(0);
+      expect(manager.hasInFlightRun(agent.id)).toBe(true);
+      if (!draining) draining = drainAsyncGenerator(run);
+      await manager.waitForAgentRunStart(agent.id);
+      expect(session.startPrompts).toEqual(["original"]);
+      session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+      await draining;
+    } finally {
+      outOfBand.mockRestore();
+      await manager.closeAgent(agent.id);
+    }
+  },
+);
+
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));
   const store = new RecordingTimelineStore();

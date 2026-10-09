@@ -1,5 +1,16 @@
 # Changelog
 
+## FamiliarAgent 0.13.0 — 2026-10-08
+
+- Added **Use result…** beside completed native responses. Select a destination and instruction to connect a verified source response to another native agent in the same logical session.
+- Added **Inputs / Results** with original-source links, target conversations and durable delivery receipts. Opening or cancelling a draft does not create a project, session or target.
+- Result connections retain original transcript boundaries and content hashes. Only the selected text and user instruction are sent; later messages and unrelated history are excluded.
+- Connection messages display the instruction and selected response clearly; **Original input** reveals the unchanged full payload. Native target retries preserve the original choice after a lost acknowledgement.
+- Added idle-only native delivery and receipt lookup. A working target is rejected without interruption; uncertain outcomes are checked without automatically sending again.
+- Exact result selection initially supports Codex and Claude text. Other tools retain their native surfaces and explicit **Copy input** / **Open tool** paths; these do not claim an automatic delivery acknowledgement.
+
+Verified 1,262 automated tests, type checks and lint; actual Mac↔Ubuntu delivery in both directions; and the installed macOS flow creating a new Ubuntu Claude target with the selected model and thinking setting. Original-history and empty-session restart recovery also passed.
+
 ## FamiliarAgent 0.12.0 — 2026-10-08
 
 First FamiliarAgent integration layer on the pinned Paseo 0.11.1 baseline. Entries below this section retain the upstream Paseo history and attribution.

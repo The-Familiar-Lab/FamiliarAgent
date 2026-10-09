@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { z } from "zod";
+import type { ResultSourceSelection } from "../../shared/result-selection.js";
 import {
   bindComposition,
   compositionProject,
@@ -36,7 +37,13 @@ interface DataRow extends Record<string, SQLOutputValue> {
 }
 export type ResourceReader = (
   resource: CompositionResource,
-  page: { offset: number; limit: number; maxCharacters: number; captureBoundary?: boolean },
+  page: {
+    offset: number;
+    limit: number;
+    maxCharacters: number;
+    captureBoundary?: boolean;
+    selection?: ResultSourceSelection;
+  },
 ) => Promise<{
   messages: { role: string; text: string; timestamp?: string }[];
   nextOffset: number | null;

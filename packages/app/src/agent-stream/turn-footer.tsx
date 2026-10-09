@@ -3,9 +3,10 @@ import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SPACING, type Theme } from "@/styles/theme";
 import type { TurnTiming } from "@/timeline/turn-time";
-import type { StreamItem } from "@/types/stream";
+import type { AssistantMessageItem, StreamItem } from "@/types/stream";
 import {
   collectAssistantResponseContentForStreamRenderStrategy,
+  collectAssistantResponseItems,
   type StreamStrategy,
 } from "./strategy";
 import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
@@ -25,6 +26,7 @@ const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.fo
 export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
 
 export type TurnContentStrategy = StreamStrategy;
+export type AssistantResultHandler = (items: readonly AssistantMessageItem[]) => void;
 export type AssistantTurnForkHandler = (input: {
   target: AssistantForkTarget;
   boundary: AssistantTurnForkBoundary;
@@ -48,6 +50,7 @@ export const TurnFooter = memo(function TurnFooter({
   strategy,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  onUseResult,
   onForkInFlightTurn,
 }: {
   isRunning: boolean;
@@ -56,6 +59,7 @@ export const TurnFooter = memo(function TurnFooter({
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  onUseResult?: AssistantResultHandler;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   if (isRunning) {
@@ -79,6 +83,7 @@ export const TurnFooter = memo(function TurnFooter({
       startIndex={host.startIndex}
       supportsTimelineCursor={supportsTimelineCursor}
       onForkAssistantTurn={onForkAssistantTurn}
+      onUseResult={onUseResult}
     />
   );
 });
@@ -90,6 +95,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  onUseResult,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
@@ -97,6 +103,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex: number;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  onUseResult?: AssistantResultHandler;
 }) {
   return (
     <TurnFooterRow>
@@ -107,6 +114,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         startIndex={startIndex}
         supportsTimelineCursor={supportsTimelineCursor}
         onForkAssistantTurn={onForkAssistantTurn}
+        onUseResult={onUseResult}
       />
     </TurnFooterRow>
   );
@@ -163,6 +171,7 @@ function CompletedTurnFooter({
   startIndex,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  onUseResult,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
@@ -170,6 +179,7 @@ function CompletedTurnFooter({
   startIndex: number;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  onUseResult?: AssistantResultHandler;
 }) {
   const getContent = useCallback(
     () =>
@@ -194,10 +204,18 @@ function CompletedTurnFooter({
     },
     [boundary, onForkAssistantTurn],
   );
+  const handleUseResult = useCallback(() => {
+    onUseResult?.(
+      collectAssistantResponseItems(items, startIndex, (index) =>
+        strategy.getNeighborIndex(index, "above"),
+      ),
+    );
+  }, [onUseResult, items, startIndex, strategy]);
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
         getContent={getContent}
+        onUseResult={onUseResult ? handleUseResult : undefined}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}

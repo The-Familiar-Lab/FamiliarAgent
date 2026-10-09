@@ -18,6 +18,12 @@ export interface HistoryPageOptions {
   maxCharacters?: number;
   boundary?: HistoryFileBoundary;
   maxLineBytes?: number;
+  signal?: AbortSignal;
+  visitMessage?: (
+    message: HistoryMessage,
+    ordinal: number,
+    projection: "primary" | "fallback",
+  ) => void;
 }
 export interface TranscriptPage {
   messages: HistoryMessage[];
@@ -27,6 +33,8 @@ export interface TranscriptPage {
   updatedAt: string;
   sourceBoundary: HistoryFileBoundary;
   diagnostics: { bytesRead: number; peakBufferedLineBytes: number; recordsRead: number };
+  projection: "primary" | "fallback";
+  unreadableRecords: number;
 }
 
 interface Collector {
@@ -54,6 +62,7 @@ async function* lines(
   maxLineBytes: number,
   diagnostics: TranscriptPage["diagnostics"],
   digest: ReturnType<typeof createHash>,
+  signal?: AbortSignal,
 ) {
   if (!bytes) return;
   const stream = file.createReadStream({
@@ -61,6 +70,7 @@ async function* lines(
     end: bytes - 1,
     highWaterMark: STREAM_CHUNK_BYTES,
     autoClose: false,
+    signal,
   });
   let parts: Buffer[] = [];
   let size = 0;
@@ -187,13 +197,19 @@ async function collectLines(
       [record],
       source as "Codex" | "Claude" | "Cursor" | "Antigravity",
     );
-    collect(
-      source === "Codex" && record.type === "event_msg" ? fallback : primary,
-      messages,
-      options,
-    );
+    const projection = source === "Codex" && record.type === "event_msg" ? "fallback" : "primary";
+    const target = projection === "fallback" ? fallback : primary;
+    for (let index = 0; index < messages.length; index++)
+      options.visitMessage?.(messages[index]!, target.count + index, projection);
+    collect(target, messages, options);
   }
-  return { selected: primary.count ? primary : fallback, invalid, oversized, foundNativeId };
+  return {
+    selected: primary.count ? primary : fallback,
+    projection: primary.count ? ("primary" as const) : ("fallback" as const),
+    invalid,
+    oversized,
+    foundNativeId,
+  };
 }
 
 export async function readTranscriptPage(
@@ -215,8 +231,8 @@ export async function readTranscriptPage(
       throw new Error("Original transcript was replaced or truncated after this fork");
     const diagnostics = { bytesRead: 0, peakBufferedLineBytes: 0, recordsRead: 0 };
     const digest = createHash("sha256");
-    const { selected, invalid, oversized, foundNativeId } = await collectLines(
-      lines(file, extent, maxLineBytes, diagnostics, digest),
+    const { selected, projection, invalid, oversized, foundNativeId } = await collectLines(
+      lines(file, extent, maxLineBytes, diagnostics, digest, options.signal),
       source,
       options,
       maxCharacters,
@@ -241,6 +257,8 @@ export async function readTranscriptPage(
       updatedAt: info.mtime.toISOString(),
       sourceBoundary: { identity, bytes: extent, sha256 },
       diagnostics,
+      projection,
+      unreadableRecords: invalid + oversized,
     };
   } finally {
     await file.close();

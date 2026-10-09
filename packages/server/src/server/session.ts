@@ -11,6 +11,7 @@ import { isAbsolute } from "node:path";
 import { CreationService } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
+import { AgentMessageRejectedError } from "./agent/message-rejection.js";
 import equal from "fast-deep-equal";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { randomUUID as uuidv4 } from "node:crypto";
@@ -459,7 +460,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  messageReceipts: Pick<MessageReceipts, "send">;
+  messageReceipts: Pick<MessageReceipts, "send" | "lookup">;
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
@@ -795,7 +796,7 @@ export class Session {
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
-  private readonly messageReceipts: Pick<MessageReceipts, "send">;
+  private readonly messageReceipts: Pick<MessageReceipts, "send" | "lookup">;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
 
@@ -2714,6 +2715,20 @@ export class Session {
     }
   }
 
+  private dispatchAgentMessageDelivery(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "send_agent_message_request":
+      case "send_agent_message_if_idle_request":
+        return this.handleSendAgentMessageRequest(msg);
+      case "agent.message_receipt.request":
+        return this.handleAgentMessageReceiptRequest(msg);
+      case "wait_for_finish_request":
+        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
+      default:
+        return undefined;
+    }
+  }
+
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agents_request":
@@ -2736,10 +2751,6 @@ export class Session {
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "project.icon.set.request":
         return this.handleProjectIconSetRequest(msg);
-      case "send_agent_message_request":
-        return this.handleSendAgentMessageRequest(msg);
-      case "wait_for_finish_request":
-        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
       case "create_agent_request":
         return this.handleCreateAgentRequest(msg);
       case "resume_agent_request":
@@ -2755,7 +2766,7 @@ export class Session {
       case "clear_agent_attention":
         return this.handleClearAgentAttention(msg.agentId, msg.requestId);
       default:
-        return undefined;
+        return this.dispatchAgentMessageDelivery(msg);
     }
   }
 
@@ -8053,7 +8064,10 @@ export class Session {
   }
 
   private async handleSendAgentMessageRequest(
-    msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "send_agent_message_request" | "send_agent_message_if_idle_request" }
+    >,
   ): Promise<void> {
     const resolved = await this.resolveAgentIdentifier(msg.agentId);
     if (!resolved.ok) {
@@ -8064,6 +8078,8 @@ export class Session {
           agentId: msg.agentId,
           accepted: false,
           error: resolved.error,
+          deliveryState: "rejected",
+          code: "agent_not_found",
         },
       });
       return;
@@ -8133,6 +8149,46 @@ export class Session {
           requestId: msg.requestId,
           agentId: resolved.agentId,
           accepted: false,
+          error: errorToFriendlyMessage(error),
+          deliveryState: error instanceof AgentMessageRejectedError ? "rejected" : "unknown",
+          ...(error instanceof AgentMessageRejectedError ? { code: error.code } : {}),
+        },
+      });
+    }
+  }
+
+  private async handleAgentMessageReceiptRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.message_receipt.request" }>,
+  ): Promise<void> {
+    try {
+      const resolved = await this.resolveAgentIdentifier(msg.agentId);
+      if (!resolved.ok) throw new Error(resolved.error);
+      const receipt = await this.messageReceipts.lookup({
+        agentId: resolved.agentId,
+        messageId: msg.messageId,
+        request: {
+          prompt: buildAgentPrompt(msg.text, msg.images, msg.attachments),
+          activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+        },
+      });
+      this.emit({
+        type: "agent.message_receipt.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: resolved.agentId,
+          messageId: msg.messageId,
+          receipt,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.message_receipt.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          messageId: msg.messageId,
+          receipt: null,
           error: errorToFriendlyMessage(error),
         },
       });

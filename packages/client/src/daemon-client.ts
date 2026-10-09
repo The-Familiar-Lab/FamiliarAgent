@@ -112,6 +112,7 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
   SendAgentMessageRequest,
+  AgentMessageReceipt,
   PaseoConfigRaw,
   PaseoConfigRevision,
   WorkspaceCreateRequest,
@@ -429,6 +430,22 @@ export interface SendMessageOptions {
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+}
+
+export interface MessageReceiptOptions extends Omit<SendMessageOptions, "messageId"> {
+  /** The original payload is required to prevent interpreting a different send's receipt. */
+  text: string;
+}
+
+export class AgentMessageSendError extends Error {
+  constructor(
+    message: string,
+    readonly deliveryState: "rejected" | "unknown",
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "AgentMessageSendError";
+  }
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -3450,7 +3467,10 @@ export class DaemonClient {
     const requestId = this.createRequestId();
     const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
-      type: "send_agent_message_request",
+      type:
+        options?.activeTurnBehavior === "reject"
+          ? "send_agent_message_if_idle_request"
+          : "send_agent_message_request",
       requestId,
       agentId,
       text,
@@ -3474,8 +3494,39 @@ export class DaemonClient {
       },
     });
     if (!payload.accepted) {
-      throw new Error(payload.error ?? "sendAgentMessage rejected");
+      throw new AgentMessageSendError(
+        payload.error ?? "sendAgentMessage rejected",
+        payload.deliveryState ?? "unknown",
+        payload.code,
+      );
     }
+  }
+
+  async getAgentMessageReceipt(
+    agentId: string,
+    messageId: string,
+    options: MessageReceiptOptions,
+  ): Promise<AgentMessageReceipt> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      ...options,
+      type: "agent.message_receipt.request",
+      requestId,
+      agentId,
+      messageId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "agent.message_receipt.response" && msg.payload.requestId === requestId
+          ? msg.payload
+          : null,
+    });
+    if (payload.error || !payload.receipt)
+      throw new Error(payload.error ?? "Message receipt unavailable");
+    return payload.receipt;
   }
 
   async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {

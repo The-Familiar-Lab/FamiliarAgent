@@ -29,10 +29,15 @@ import {
   localResourceReader,
   routedResourceReader,
 } from "./readers.js";
-import { CompositionStore } from "./store.js";
+import { CompositionStore, type ResourceReader } from "./store.js";
 import { BridgeRegistry, CompositionBridges } from "./bridge.js";
-import type { CatalogInvoke } from "./catalog.js";
 import { localCliReader } from "./local-reader.js";
+import { ResultStore } from "./result-store.js";
+import {
+  invokeResultCatalog,
+  registerResultHandlers,
+  resultCatalogContracts,
+} from "./result-handlers.js";
 
 export function registerComposition(
   server: PluginServerContext,
@@ -46,6 +51,7 @@ export function registerComposition(
   },
 ) {
   const store = new CompositionStore(options.directory);
+  const results = new ResultStore(options.directory, (id) => store.read(id));
   const bridgeRegistry = new BridgeRegistry(
     path.join(options.directory, "bridges"),
     options.serverId,
@@ -55,12 +61,29 @@ export function registerComposition(
     leasesDirectory: path.join(options.directory, "outgoing-bridges"),
   });
   // Source-side catalog requests never follow another private link, preventing proxy cycles.
-  const catalogInvoke: CatalogInvoke = async (method, input, explicitAuthority) => {
+  const catalogInvoke = async (
+    method: string,
+    input: Record<string, unknown>,
+    explicitAuthority?: string,
+    reader?: ResourceReader,
+  ): Promise<unknown> => {
     const id = typeof input.id === "string" ? input.id : "";
     const authority = store.hasSession(id)
       ? ""
       : (explicitAuthority ?? (await options.authority()));
     if (authority) return forwardWorkspace(authority, method, input, options.cliPath);
+    if (resultCatalogContracts.some((contract) => contract.name === method))
+      return invokeResultCatalog(
+        results,
+        reader ??
+          routedResourceReader({
+            ...options,
+            local: localCliReader(options.cliPath, options.home),
+            bridge: (reference) => bridgeRegistry.reader(reference),
+          }),
+        method,
+        input,
+      );
     switch (method) {
       case readComposition.name: {
         const request = readComposition.input.parse(input);
@@ -95,14 +118,39 @@ export function registerComposition(
         "FamiliarAgent: saved context connections could not be restored; reconnect in the Hub",
       ),
     );
-  const sessionInvoke = async (method: string, input: Record<string, unknown>) => {
+  const sessionInvoke = async (
+    method: string,
+    input: Record<string, unknown>,
+    reader?: ResourceReader,
+  ) => {
     const id = String(input.id);
     if (!store.hasSession(id)) {
       const linked = await bridgeRegistry.catalog(id);
       if (linked) return linked(method, input);
     }
-    return catalogInvoke(method, input);
+    return catalogInvoke(method, input, undefined, reader);
   };
+  registerResultHandlers(server, {
+    serverId: options.serverId,
+    invoke: (method, input, paseo) =>
+      sessionInvoke(
+        method,
+        input,
+        paseo
+          ? routedResourceReader({
+              ...options,
+              local: localResourceReader({ ...options, paseo }),
+              bridge: (reference) => bridgeRegistry.reader(reference),
+            })
+          : undefined,
+      ),
+    reader: (paseo) =>
+      routedResourceReader({
+        ...options,
+        local: localResourceReader({ ...options, paseo }),
+        bridge: (reference) => bridgeRegistry.reader(reference),
+      }),
+  });
   const handle = <I extends z.ZodType, O extends z.ZodType>(
     contract: PluginRpcContract<I, O>,
     local: (input: z.output<I>) => z.input<O>,
@@ -218,6 +266,7 @@ export function registerComposition(
   });
   return () => {
     bridges.close();
+    results.close();
     store.close();
   };
 }

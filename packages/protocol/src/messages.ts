@@ -1194,7 +1194,7 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
-export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
+export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "reject"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
 export const SendAgentMessageSchema = z.object({
@@ -1359,6 +1359,24 @@ export const SendAgentMessageRequestSchema = z.object({
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
+
+// A distinct operation fails closed on older daemons that strip unknown options.
+export const SendAgentMessageIfIdleRequestSchema = SendAgentMessageRequestSchema.extend({
+  type: z.literal("send_agent_message_if_idle_request"),
+  activeTurnBehavior: z.literal("reject"),
+});
+
+export const AgentMessageReceiptRequestSchema = SendAgentMessageRequestSchema.extend({
+  type: z.literal("agent.message_receipt.request"),
+  messageId: z.string().min(1),
+});
+
+export const AgentMessageReceiptSchema = z.object({
+  state: z.enum(["absent", "pending", "completed", "rejected"]),
+  error: z.string().nullable(),
+  code: z.string().nullable(),
+});
+export type AgentMessageReceipt = z.infer<typeof AgentMessageReceiptSchema>;
 
 export const WaitForFinishRequestSchema = z.object({
   type: z.literal("wait_for_finish_request"),
@@ -3205,6 +3223,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
+  SendAgentMessageIfIdleRequestSchema,
+  AgentMessageReceiptRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
@@ -4930,6 +4950,19 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string(),
     accepted: z.boolean(),
+    error: z.string().nullable(),
+    deliveryState: z.enum(["rejected", "unknown"]).optional(),
+    code: z.string().optional(),
+  }),
+});
+
+export const AgentMessageReceiptResponseSchema = z.object({
+  type: z.literal("agent.message_receipt.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    messageId: z.string(),
+    receipt: AgentMessageReceiptSchema.nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -6907,6 +6940,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
+  AgentMessageReceiptResponseSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,

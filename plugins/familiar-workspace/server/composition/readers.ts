@@ -10,6 +10,8 @@ import { forwardWorkspace } from "../authority.js";
 import type { ResourceReader } from "./store.js";
 import { readNativePrefix } from "./native-prefix.js";
 import { NativeTranscriptUnavailableError, readNativeTranscript } from "./native-transcript.js";
+import { readResultSource } from "./result-source.js";
+import type { ResultSourceSelection } from "../../shared/result-selection.js";
 
 const EMPTY_PREFIX_SHA256 = createHash("sha256").digest("hex");
 
@@ -35,6 +37,8 @@ export function localResourceReader(options: {
       throw new Error(
         "This reference is opened with its native file, skill, MCP or tool surface; it is not a conversation history",
       );
+    if (input.selection && resource.format !== "native-timeline")
+      throw new Error("Selected results require a native conversation source");
     if (resource.format === "imported-history")
       return readImported(options.history, resource, input);
     if (resource.format === "native-timeline") return readNative(options.paseo, resource, input);
@@ -126,6 +130,7 @@ async function readNative(
 ): ReturnType<ResourceReader> {
   if (resource.boundary && resource.boundary.kind !== "native")
     throw new Error("History boundary does not match the source format");
+  if (input.selection) return readSelectedNative(paseo, resource, input.selection);
   if (hasFrozenEmptyPrefix(resource.boundary)) {
     // An already captured empty prefix never includes future turns and needs no native runtime.
     return { messages: [], nextOffset: null, boundary: resource.boundary };
@@ -155,6 +160,17 @@ async function readNative(
     return result;
   }
   return readLiveNativePage(agent, head, resource, input);
+}
+
+async function readSelectedNative(
+  paseo: PaseoApi,
+  resource: CompositionResource,
+  selection: ResultSourceSelection,
+): ReturnType<ResourceReader> {
+  const snapshot = await paseo.agents.ref(resource.locator).refresh();
+  if (!snapshot) throw new Error("Selected source agent is unavailable");
+  const result = await readResultSource(snapshot.agent, { resource, selection });
+  return { messages: result.messages, nextOffset: null, boundary: result.boundary };
 }
 
 async function readLiveNativePage(
@@ -248,7 +264,7 @@ export function routedResourceReader(options: {
 
 export async function boundedSourceRead(
   resource: CompositionResource,
-  input: { offset: number; limit: number; maxCharacters: number; captureBoundary?: boolean },
+  input: Parameters<ResourceReader>[1],
   reader: ResourceReader,
 ) {
   const result = await reader(resource, input);

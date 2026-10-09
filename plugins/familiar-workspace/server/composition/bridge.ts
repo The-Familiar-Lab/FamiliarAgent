@@ -73,13 +73,14 @@ function authorize(header: string | undefined, token: string) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
-/** Exposes scoped history reads and session memory; never the complete daemon API or filesystem. */
+/** Exposes scoped history, session memory and input receipts; never native execution or the filesystem. */
 export async function startReadOnlyBridge(options: {
   token: string;
   resources: Set<string>;
   reader: ResourceReader;
   sessions?: Map<string, string | undefined>;
   catalog?: CatalogInvoke;
+  targetServerId?: string;
 }): Promise<{ server: Server; port: number }> {
   const server = createServer(
     { maxHeaderSize: 8192, requestTimeout: BRIDGE_TIMEOUT_MS },
@@ -107,7 +108,12 @@ export async function startReadOnlyBridge(options: {
         const raw: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         let result: unknown;
         if (catalogRequest) {
-          result = await scopedCatalogCall(raw, options.sessions!, options.catalog!);
+          result = await scopedCatalogCall(
+            raw,
+            options.sessions!,
+            options.catalog!,
+            options.targetServerId,
+          );
         } else {
           const { resource, ...input } = readCompositionSource.input.parse(raw);
           if (!options.resources.has(resourceKey(resource))) {
@@ -347,6 +353,7 @@ export class CompositionBridges {
         reader,
         sessions,
         catalog,
+        targetServerId: input.targetServerId,
       });
       let child: ChildProcess | undefined;
       try {

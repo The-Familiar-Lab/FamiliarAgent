@@ -14,6 +14,21 @@ FamiliarAgent connects projects and conversations across existing agent tools an
 
 A linked folder is a location mapping, not a file sync operation. The destination needs an existing checkout, worktree or shared mount. **Separate Git worktree** uses the original workspace service and Git object storage. Uncommitted changes stay in their original folder.
 
+## Connect a particular result to the next tool
+
+1. Open a completed Codex or Claude response and select **Use result…** beside **Copy**.
+2. **Inputs / Results** opens with the exact response preview. Choose an existing conversation in this logical session or **New agent**; for a new agent select its server, folder, provider, model and thinking setting.
+3. Write the next instruction and select **Send input**. The destination runs the work using its original provider. A result card links the original response to the receiving conversation while retaining the same logical session.
+4. Use **Open original**, **Open conversation** and the result preview to follow the connection. **Accepted** means that the native input was acknowledged, not that its task has finished.
+
+An unlinked source is connected to a project and logical session only when you explicitly send. Preview and **Cancel** do not create a new session. Existing targets belonging to another logical session are rejected instead of silently reassigned. A new target receives the selected result and instruction without an automatic recent-history prefix.
+
+Connected input messages show **Your instruction** and **Selected response**. Expand **Original input** to inspect the unchanged native payload. If a new-target acknowledgement is lost, retry retains the original server, folder and model until the draft is cancelled.
+
+The source stays on its owning server. A result record stores the original boundary, selection position, content hash and a short preview; the target receives only the selected text and instruction. Source files are streamed and checked rather than copied or read wholly into memory. Changed, missing, ambiguous or oversized selections produce an error. Current limits are 32 text segments, 64 KiB of selected text and 16 KiB of instructions. A large original transcript still takes time to read and validate.
+
+A busy destination is not interrupted. **Check status** reads its delivery receipt after an uncertain outcome and does not resend the input. **Send prepared input** applies only to an input that has not yet been claimed for delivery. For a tool without a supported input API, **Copy input** and **Open tool** keep the native workflow available; copying does not record an automatic delivery.
+
 ## What travels between tools
 
 | State                                | How it is connected                                                          |
@@ -60,7 +75,9 @@ Advanced settings expose authority routing, resource mappings and limits. Cross-
 
 ## Verified scope and limits
 
-The release validation includes actual Mac Codex and Ubuntu Claude using the same logical session, reading original history through MCP, updating shared memory, and creating a pointer fork. Archived original conversations remained readable after daemon restart without manually renewing the connection. The installed Hub also forked a Mac session to a native Ubuntu Claude chat; destination model and thinking settings were retained. Explicitly unstarted Codex sessions recovered after restart without resetting their logical identity, workspace or MCP configuration. Native Git worktrees, terminal execution and bounded history reading have separate automated and live checks.
+Selected-result validation covers actual Mac Codex → Ubuntu Claude → Mac Codex in the same logical session, exact prepared/native input hashes, exclusion of later messages and duplicate-send suppression. The installed macOS UI also created a new Ubuntu Claude target through **Use result… → New agent → Send input** and displayed its real response with the selected model and thinking setting.
+
+The earlier release validation includes actual Mac Codex and Ubuntu Claude using the same logical session, reading original history through MCP, updating shared memory, and creating a pointer fork. Archived original conversations remained readable after daemon restart without manually renewing the connection. The installed Hub also forked a Mac session to a native Ubuntu Claude chat; destination model and thinking settings were retained. Explicitly unstarted Codex sessions recovered after restart without resetting their logical identity, workspace or MCP configuration. Native Git worktrees, terminal execution and bounded history reading have separate automated and live checks.
 
 The initial live fork manifest was 1,155 bytes; this is one measured case, not a constant size guarantee. Resource measurements and passing fixtures do not establish every tool/account combination. Real Discord account operation, user-provided ChatGPT exports and closed harness internals require separate validation.
 

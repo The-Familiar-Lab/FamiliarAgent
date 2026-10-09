@@ -2,11 +2,36 @@ import {
   AgentStreamEventPayloadSchema,
   AgentTimelineEntryPayloadSchema,
   SendAgentMessageRequestSchema,
+  SendAgentMessageIfIdleRequestSchema,
+  AgentMessageReceiptRequestSchema,
 } from "./messages";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 describe("send_agent_message_request active-turn behavior", () => {
+  it("uses a separate fail-closed operation for reject-if-busy and bounded receipt identity", () => {
+    const request = {
+      type: "send_agent_message_if_idle_request",
+      requestId: "request",
+      agentId: "agent",
+      text: "result",
+      messageId: "edge",
+      activeTurnBehavior: "reject",
+    };
+    expect(SendAgentMessageIfIdleRequestSchema.parse(request).activeTurnBehavior).toBe("reject");
+    expect(SendAgentMessageRequestSchema.safeParse(request).success).toBe(false);
+    expect(
+      SendAgentMessageIfIdleRequestSchema.safeParse({ ...request, activeTurnBehavior: "interrupt" })
+        .success,
+    ).toBe(false);
+    expect(
+      AgentMessageReceiptRequestSchema.safeParse({
+        ...request,
+        type: "agent.message_receipt.request",
+        messageId: "",
+      }).success,
+    ).toBe(false);
+  });
   it("accepts an optional steer intent while retaining interrupt compatibility", () => {
     expect(
       SendAgentMessageRequestSchema.parse({

@@ -180,7 +180,9 @@ interface FakeSendCall {
   text: string;
   options: {
     messageId: string;
-    activeTurnBehavior?: "interrupt" | "steer";
+    activeTurnBehavior?: Parameters<
+      ComposerSendClient["sendAgentMessage"]
+    >[2]["activeTurnBehavior"];
     images: Array<{ data: string; mimeType: string }>;
     attachments: AgentAttachment[];
   };

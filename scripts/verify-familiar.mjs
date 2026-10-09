@@ -61,6 +61,10 @@ if (active.has("server"))
     "packages/server/src/server/agent/agent-manager.test.ts",
     "packages/server/src/server/agent/provider-registry.test.ts",
     "packages/server/src/server/agent/chat-search/index.test.ts",
+    "packages/server/src/server/agent/agent-prompt.test.ts",
+    "packages/server/src/server/message-receipts/index.test.ts",
+    "packages/server/src/server/session/owned-subscriptions/replies.test.ts",
+    "packages/server/src/server/session/owned-subscriptions/index.test.ts",
   );
 if (active.has("app"))
   tests.push(
@@ -70,6 +74,7 @@ if (active.has("app"))
     "packages/app/src/runtime/daemon-start-service.test.ts",
     "packages/app/src/file-pane/desktop-stream.test.ts",
     "packages/protocol/src/terminal-profiles.test.ts",
+    "packages/protocol/src/messages.active-turn-behavior.test.ts",
     "packages/app/src/components/familiar-provider-setup-action.test.ts",
   );
 if (active.has("app"))
@@ -83,6 +88,11 @@ if (active.has("app"))
       "src/plugins/host-navigation.test.ts",
       "src/plugins/host-navigation.test.tsx",
       "src/panels/shared-session-banner.test.tsx",
+      "src/agent-stream/result-selection.test.ts",
+      "src/components/connected-result-message.test.tsx",
+      "src/composer/actions.test.ts",
+      "src/composer/input/state.test.ts",
+      "src/hooks/use-settings/storage.test.ts",
       "src/utils/markdown-parser.test.ts",
       "src/utils/assistant-markdown-parser.test.ts",
       "src/utils/__tests__/split-markdown-blocks.test.ts",
@@ -94,6 +104,7 @@ if (active.has("cli"))
   tests.push(
     "packages/cli/src/commands/agent/fork.test.ts",
     "packages/cli/src/commands/context/mcp.test.ts",
+    "packages/client/src/index.test.ts",
   );
 if (tests.length) add("focused-tests", "vitest", ["run", "--maxWorkers=2", ...tests]);
 if (active.has("discord")) {
@@ -115,6 +126,7 @@ if (options.has("--integration"))
     "packages/server/src/server/daemon-e2e/familiar-workspace.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-fork.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-composition.e2e.test.ts",
+    "packages/server/src/server/daemon-e2e/familiar-result-input.e2e.test.ts",
     "--maxWorkers=1",
   ]);
 const running = new Set();

@@ -18,14 +18,17 @@ type CorrelatedType<M> = M extends { type: infer T; payload: infer P }
     : never
   : never;
 type StatusReply = Extract<KnownStatusPayload, { requestId: string }>["status"];
-type ExceptionalReply = Exclude<
-  CorrelatedType<Exclude<SessionOutboundMessage, { type: "status" }>>,
-  ConventionalReply<Request["type"]> | "rpc_error"
->;
+type ExceptionalReply =
+  | Exclude<
+      CorrelatedType<Exclude<SessionOutboundMessage, { type: "status" }>>,
+      ConventionalReply<Request["type"]> | "rpc_error"
+    >
+  | "send_agent_message_response";
 
 // Naming is a protocol convention, not proof. Every nonconforming correlated output
 // must declare its originating request; additions to the wire union fail typecheck here.
 const exceptions = {
+  send_agent_message_response: ["send_agent_message_request", "send_agent_message_if_idle_request"],
   pong: ["ping"],
   agent_archived: ["archive_agent_request"],
   agent_deleted: ["delete_agent_request"],

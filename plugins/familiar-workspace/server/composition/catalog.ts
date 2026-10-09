@@ -4,6 +4,8 @@ import {
   locateCompositionResource,
   updateComposition,
 } from "../../shared/composition.js";
+import { resultCatalogContracts } from "./result-handlers.js";
+import { claimCompositionInput, finishCompositionInput } from "../../shared/results.js";
 
 export type CatalogInvoke = (
   method: string,
@@ -16,13 +18,15 @@ const contracts = [
   readCompositionContext,
   locateCompositionResource,
   updateComposition,
+  ...resultCatalogContracts,
 ];
 
-/** A linked runtime may read its session and change its memory, never remap sources or endpoints. */
+/** A linked runtime may access its session and input receipts, never remap sources or endpoints. */
 export async function scopedCatalogCall(
   raw: unknown,
   sessions: ReadonlyMap<string, string | undefined>,
   invoke: CatalogInvoke,
+  targetServerId?: string,
 ) {
   if (!raw || typeof raw !== "object") throw new Error("Invalid session context request");
   const request = raw as { method?: unknown; input?: unknown };
@@ -31,6 +35,14 @@ export async function scopedCatalogCall(
   const input = contract.input.parse(request.input);
   if (input.forwarded) throw new Error("Session context links cannot forward another link");
   if (!sessions.has(input.id)) throw new Error("Session is outside this context link");
+  if (
+    contract.name === claimCompositionInput.name ||
+    contract.name === finishCompositionInput.name
+  ) {
+    const target = "targetServerId" in input ? input.targetServerId : undefined;
+    if (!targetServerId || target !== targetServerId)
+      throw new Error("Input delivery mutation belongs to a different context-link recipient");
+  }
   const authority = sessions.get(input.id);
   if (contract.name === updateComposition.name) {
     const update = updateComposition.input.parse(input);

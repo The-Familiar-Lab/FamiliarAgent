@@ -8,7 +8,7 @@ The first commit, `7171e0f` (`Import pinned Paseo baseline for FamiliarAgent`), 
 
 Use Node.js 24 and npm from the product repository root. Both dependency trees have committed npm lockfiles; the Discord connector is intentionally installed separately from the root workspaces.
 
-Desktop packaging also uses the root npm lockfile. Keep package-manager metadata consistent with that choice: an inherited pnpm declaration selects the wrong dependency collector, whose fallback rejects security overrides that intentionally replace an upstream dependency range. The npm collector uses the installed, override-aware dependency graph.
+Desktop packaging also uses the root npm lockfile and explicitly declares npm in `packageManager`. Keep package-manager metadata consistent with that choice: an inherited pnpm declaration selects the wrong dependency collector, whose fallback rejects security overrides that intentionally replace an upstream dependency range. The npm collector uses the installed, override-aware dependency graph.
 
 ```sh
 npm ci --no-audit --no-fund

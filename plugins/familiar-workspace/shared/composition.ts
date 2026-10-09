@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { resultSourceSelection } from "./result-selection.js";
 
 const id = z.string().min(1).max(160);
 const revision = z.number().int().positive();
@@ -324,6 +325,7 @@ export const readCompositionSource = defineRpc({
         .max(64 * 1024)
         .default(16 * 1024),
       captureBoundary: z.boolean().optional(),
+      selection: resultSourceSelection.optional(),
       forwarded: z.boolean().optional(),
     })
     .strict(),

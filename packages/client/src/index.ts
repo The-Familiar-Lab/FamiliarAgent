@@ -4,6 +4,7 @@ import type { DaemonClientConfig } from "./daemon-client.js";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type {
   AgentSnapshotPayload,
+  AgentMessageReceipt,
   CreationSnapshot,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
@@ -29,6 +30,7 @@ import type {
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient, type CreateAgentRequestOptions } from "./daemon-client.js";
+export { AgentMessageSendError } from "./daemon-client.js";
 import {
   createTerminalActions,
   type PaseoTerminalActions,
@@ -55,6 +57,7 @@ import type {
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
   SendMessageOptions,
+  MessageReceiptOptions,
   WaitForFinishResult,
 } from "./daemon-client.js";
 
@@ -361,6 +364,8 @@ export interface PaseoAgentHandle {
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
+  /** Reads the durable acknowledgement for this exact payload; never submits or retries it. */
+  messageReceipt(messageId: string, options: MessageReceiptOptions): Promise<AgentMessageReceipt>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
@@ -940,6 +945,8 @@ function createAgentHandleFactory(
       send: async (text, options) => {
         await daemonClient.sendAgentMessage(id, text, options);
       },
+      messageReceipt: (messageId, options) =>
+        daemonClient.getAgentMessageReceipt(id, messageId, options),
       respondToPermission: async ({ requestId, response }) => {
         await daemonClient.respondToPermission(id, requestId, response);
       },

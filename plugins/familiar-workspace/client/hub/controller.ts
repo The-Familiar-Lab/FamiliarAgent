@@ -46,6 +46,7 @@ import { findNativeSession, CATALOG_PAGE_SIZE, forkWorktree } from "./entry.js";
 export const TABS = [
   "Projects",
   "Sessions",
+  "Inputs / Results",
   "Tools",
   "Memory & Skills",
   "Files",
@@ -57,6 +58,15 @@ type Model = NonNullable<PaseoProviderModelsResult["models"]>[number];
 export interface HubProps extends PluginSurfaceProps {
   Advanced: ComponentType<PluginSurfaceProps>;
   params?: Record<string, string>;
+}
+export interface NativeTargetSelection {
+  serverId: string;
+  cwd: string;
+  title: string;
+  provider: string;
+  modelId: string;
+  thinking: string;
+  toolId: string;
 }
 function forkTitle(draft: string, parent: string): string {
   const title = draft.trim();
@@ -422,11 +432,17 @@ export function useHubController(props: HubProps) {
     },
     [project, host.id, hosts, hostName, refresh, selectSession, renewLinkedSession],
   );
-  const linkCreatedWorkspace = async (owner: CompositionProject, directory: string) => {
+  const linkCreatedWorkspace = async (
+    owner: CompositionProject,
+    directory: string,
+    selection: NativeTargetSelection,
+  ) => {
     if (
       owner.resources.some(
         (item) =>
-          item.kind === "codebase" && item.serverId === target && item.locator === directory,
+          item.kind === "codebase" &&
+          item.serverId === selection.serverId &&
+          item.locator === directory,
       )
     )
       return;
@@ -434,7 +450,19 @@ export function useHubController(props: HubProps) {
       id: owner.id,
       title: owner.title,
       memory: owner.memory,
-      resources: [...owner.resources, { ...mapping(), locator: directory }],
+      resources: [
+        ...owner.resources,
+        {
+          id: operationId(),
+          kind: "codebase",
+          label: `${hostName(selection.serverId)} project folder`,
+          serverId: selection.serverId,
+          connection: hosts.find((item) => item.serverId === selection.serverId)?.connection,
+          format: "path",
+          locator: directory,
+          readOnly: true,
+        },
+      ],
       expectedRevision: owner.revision,
       operationId: operationId(),
     });
@@ -444,13 +472,13 @@ export function useHubController(props: HubProps) {
     owner: CompositionProject,
     logical: CompositionSession,
     handle: PaseoAgentHandle,
-    provider: string,
+    selection: NativeTargetSelection,
   ) => {
     let next: CompositionSession;
     try {
       const createdCwd = handle.cwd;
       if (!createdCwd) throw new Error("The created agent did not report its project folder.");
-      await linkCreatedWorkspace(owner, createdCwd);
+      await linkCreatedWorkspace(owner, createdCwd, selection);
       setCwd(createdCwd);
       next = await hostRpc(host.id, bindComposition, {
         id: logical.id,
@@ -458,25 +486,26 @@ export function useHubController(props: HubProps) {
         operationId: operationId(),
         endpoint: {
           kind: "agent",
-          serverId: target,
-          connection: targetHost?.connection,
+          serverId: selection.serverId,
+          connection: hosts.find((item) => item.serverId === selection.serverId)?.connection,
           agentId: handle.id,
-          provider,
-          model: modelId,
+          provider: selection.provider,
+          model: selection.modelId,
           cwd: createdCwd,
-          harness: toolId,
+          harness: selection.toolId,
         },
       });
       setSession(next);
     } catch (value) {
       throw new Error(
-        `Agent ${handle.id} was created on ${hostName(target)}, but could not be linked: ${
+        `Agent ${handle.id} was created on ${hostName(selection.serverId)}, but could not be linked: ${
           value instanceof Error ? value.message : String(value)
         }. Use Link session to recover it.`,
         { cause: value },
       );
     }
     await renewLinkedSession(next);
+    return next;
   };
   const start = async (fork: boolean) => {
     if (!selectedTool?.nativeProvider || !modelId)
@@ -509,26 +538,58 @@ export function useHubController(props: HubProps) {
     setSession(logical);
     if (fork) setTitle(logical.title);
     if (targetHost) await connectContextSources(host.id, logical, targetHost, hosts);
-    const continuation = await continuationContext(host.id, logical, hosts);
-    const runtime = await hostRpc(target, compositionRuntime, {
+    const { handle } = await createNativeTarget(owner, logical, { fork });
+    await refresh();
+    navigation?.openAgent({ serverId: target, agentId: handle.id });
+  };
+  const nativeTargetSelection = (): NativeTargetSelection => {
+    if (!selectedTool?.nativeProvider || !modelId)
+      throw new Error("Choose an available native agent and model.");
+    return {
+      serverId: target,
+      cwd,
+      title,
+      provider: selectedTool.nativeProvider,
+      modelId,
+      thinking,
+      toolId,
+    };
+  };
+  const createNativeTarget = async (
+    owner: CompositionProject,
+    logical: CompositionSession,
+    options: {
+      fork?: boolean;
+      resultInput?: boolean;
+      idempotencyKey?: string;
+      selection?: NativeTargetSelection;
+    } = {},
+  ) => {
+    const selection = options.selection ?? nativeTargetSelection();
+    if (!selection.cwd.trim()) throw new Error("Choose the target project folder.");
+    const destination = hosts.find((item) => item.serverId === selection.serverId);
+    if (destination) await connectContextSources(host.id, logical, destination, hosts);
+    const continuation = options.resultInput
+      ? `Shared session ${logical.id}. The user will send a specifically selected source response as input. Other histories remain available through the shared tools.`
+      : await continuationContext(host.id, logical, hosts);
+    const runtime = await hostRpc(selection.serverId, compositionRuntime, {
       sessionId: logical.id,
     });
-    const handle = await getPaseoClient(target).agents.create({
-      cwd,
-      title: fork ? logical.title : title.trim() || logical.title,
+    const handle = await getPaseoClient(selection.serverId).agents.create({
+      cwd: selection.cwd,
+      title: options.fork ? logical.title : selection.title.trim() || logical.title,
       config: {
-        provider: `${selectedTool.nativeProvider}/${modelId}`,
-        thinkingOptionId: thinking || undefined,
+        provider: `${selection.provider}/${selection.modelId}`,
+        thinkingOptionId: selection.thinking || undefined,
         systemPrompt: `${continuation}\n\nUse familiar_context and familiar_history MCP tools for shared memory and additional history. Save important decisions with familiar_memory.`,
         mcpServers: runtime.mcpServers,
       },
-      worktree: fork && separateWorktree ? forkWorktree(operationId()) : undefined,
+      worktree: options.fork && separateWorktree ? forkWorktree(operationId()) : undefined,
       labels: { familiarProject: owner.id, familiarSession: logical.id },
-      idempotencyKey: operationId(),
+      idempotencyKey: options.idempotencyKey ?? operationId(),
     });
-    await bindCreatedAgent(owner, logical, handle, selectedTool.nativeProvider);
-    await refresh();
-    navigation?.openAgent({ serverId: target, agentId: handle.id });
+    const next = await bindCreatedAgent(owner, logical, handle, selection);
+    return { session: next, handle };
   };
   const prepareExternalContext = async (serverId: string) => {
     const destination = hosts.find((item) => item.serverId === serverId);
@@ -902,6 +963,8 @@ export function useHubController(props: HubProps) {
     linkFolder,
     attachNative,
     start,
+    createNativeTarget,
+    nativeTargetSelection,
     launch,
     openEndpoint,
     linkHistory,

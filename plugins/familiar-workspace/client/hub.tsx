@@ -9,10 +9,13 @@ import { HubSessions } from "./hub/sessions.js";
 import { HubFiles } from "./hub/files.js";
 import { HubTools } from "./hub/tools.js";
 import { HubMemory } from "./hub/memory.js";
+import { useResultFlow } from "./hub/result-flow.js";
+import { HubResults } from "./hub/results.js";
 import { HubServers } from "./hub/servers.js";
 export function FamiliarHub(props: HubProps) {
   const hub = useHubController(props);
   const ui = useHubUi(props.theme, hub.busy);
+  const results = useResultFlow(hub, props.host.id, props.params);
   const {
     navigation,
     hosts,
@@ -94,6 +97,7 @@ export function FamiliarHub(props: HubProps) {
       <HubWorkspace hub={hub} ui={ui} props={props} />
       <HubProjects hub={hub} ui={ui} props={props} />
       <HubSessions hub={hub} ui={ui} props={props} />
+      <HubResults hub={hub} ui={ui} props={props} flow={results} />
       <HubFiles hub={hub} ui={ui} props={props} />
       <HubTools hub={hub} ui={ui} props={props} />
       <HubMemory hub={hub} ui={ui} props={props} />

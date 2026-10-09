@@ -1,13 +1,30 @@
 import type { AssistantImageContext } from "@/utils/assistant-image-metadata";
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import type { StreamItem } from "@/types/stream";
+import type { AssistantMessageItem, StreamItem } from "@/types/stream";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
   BottomAnchorLocalRequest,
   BottomAnchorRouteRequest,
 } from "./bottom-anchor-controller";
+
+/** The exact assistant segments represented by a response's Copy action. */
+export function collectAssistantResponseItems(
+  items: readonly StreamItem[],
+  startIndex: number,
+  previousIndex: (index: number) => number,
+): AssistantMessageItem[] {
+  const messages: AssistantMessageItem[] = [];
+  let laterItem: StreamItem | null = null;
+  for (let index = startIndex; index >= 0 && index < items.length; index = previousIndex(index)) {
+    const currentItem = items[index];
+    if (!currentItem || (laterItem && !continuesResponse(currentItem, laterItem))) break;
+    if (currentItem.kind === "assistant_message") messages.push(currentItem);
+    laterItem = currentItem;
+  }
+  return messages.toReversed();
+}
 
 type EdgeSlot = "header" | "footer";
 type NeighborRelation = "above" | "below";
@@ -178,25 +195,14 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
       }
       return items[neighborIndex];
     },
-    collectAssistantResponseContent: (items, startIndex) => {
-      const messages: string[] = [];
-      let laterItem: StreamItem | null = null;
-      for (
-        let index = startIndex;
-        index >= 0 && index < items.length;
-        index += config.assistantTurnTraversalStep
-      ) {
-        const currentItem = items[index];
-        if (!currentItem || (laterItem && !continuesResponse(currentItem, laterItem))) {
-          break;
-        }
-        if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
-        }
-        laterItem = currentItem;
-      }
-      return messages.toReversed().join("\n\n");
-    },
+    collectAssistantResponseContent: (items, startIndex) =>
+      collectAssistantResponseItems(
+        items,
+        startIndex,
+        (index) => index + config.assistantTurnTraversalStep,
+      )
+        .map((item) => item.text)
+        .join("\n\n"),
     isNearBottom: (input) => config.isNearBottom(input),
     getBottomOffset: (metrics) => config.getBottomOffset(metrics),
     getEdgeSlotProps: (component, gapSize) => {

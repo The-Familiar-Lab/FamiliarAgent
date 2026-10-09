@@ -76,6 +76,7 @@ import {
   TurnFooter,
   TURN_FOOTER_BOTTOM_SPACING,
   type AssistantTurnForkHandler,
+  type AssistantResultHandler,
   type InFlightTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
@@ -100,6 +101,9 @@ import {
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useForkAgent } from "@/hooks/use-fork-agent";
+import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
+import { createPluginNavigation } from "@/plugins/navigation";
+import { resultScreenParams, selectAssistantResult } from "./result-selection";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
@@ -157,6 +161,7 @@ function renderStreamItemWithTurnFooter(input: {
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  onUseResult?: AssistantResultHandler;
 }): ReactNode {
   if (!input.content) {
     return null;
@@ -171,6 +176,7 @@ function renderStreamItemWithTurnFooter(input: {
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
       onForkAssistantTurn={input.onForkAssistantTurn}
+      onUseResult={input.onUseResult}
     />
   ) : null;
   const content = (
@@ -512,6 +518,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         });
       },
     );
+
+    const handleUseResult: AssistantResultHandler = useStableEvent((items) => {
+      void selectAssistantResult(items, (text) =>
+        digestStringAsync(CryptoDigestAlgorithm.SHA256, text),
+      )
+        .then((selection) => {
+          return createPluginNavigation({
+            serverId: resolvedServerId,
+            workspaceId: context.workspaceId ?? null,
+          }).openSurface("familiar-workspace", "main", resultScreenParams(agentId, selection));
+        })
+        .catch((error: unknown) =>
+          toast?.error(error instanceof Error ? error.message : String(error)),
+        );
+    });
 
     // The in-flight turn forks with no boundary at all: `selectForkContextRows`
     // projects the whole timeline when neither boundary field is given, so the
@@ -919,10 +940,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+          onUseResult: readOnly ? undefined : handleUseResult,
         });
       },
       [
         handleForkAssistantTurn,
+        handleUseResult,
         readOnly,
         renderStreamItemContent,
         streamRenderStrategy,
@@ -953,11 +976,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
+            onUseResult={readOnly ? undefined : handleUseResult}
             onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
           />
         ) : null,
       [
         handleForkAssistantTurn,
+        handleUseResult,
         handleForkInFlightTurn,
         readOnly,
         isTurnActive,

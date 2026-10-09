@@ -2,7 +2,16 @@ import { Text, View } from "react-native";
 import { getPaseoClient } from "@getpaseo/plugin/client";
 import { ROW, HubTargetPicker, type HubUi } from "./ui.js";
 import type { HubController, HubProps } from "./controller.js";
-export function HubWorkspace({ hub, ui }: { hub: HubController; ui: HubUi; props: HubProps }) {
+export function HubWorkspace({
+  hub,
+  ui,
+  forResult = false,
+}: {
+  hub: HubController;
+  ui: HubUi;
+  props: HubProps;
+  forResult?: boolean;
+}) {
   const {
     navigation,
     tab,
@@ -27,33 +36,35 @@ export function HubWorkspace({ hub, ui }: { hub: HubController; ui: HubUi; props
   } = hub;
   const { muted, card, button, field } = ui;
   const targetPicker = <HubTargetPicker hub={hub} ui={ui} />;
-  return tab === "Projects" || tab === "Sessions" ? (
+  return forResult || tab === "Projects" || tab === "Sessions" ? (
     <View style={card}>
       <Text style={ui.sectionHeading}>Where to work</Text>
       {targetPicker}
       {field("Project folder on selected server", cwd, setCwd)}
       {field("Project / session name", title, setTitle)}
-      <View style={ROW}>
-        {button(
-          project ? "Link folder" : "Create project",
-          () => {
-            void run(linkFolder);
-          },
-          !cwd,
-        )}
-        {project
-          ? button(
-              "Open files",
-              () => {
-                void run(async () => {
-                  const workspace = await getPaseoClient(target).workspaces.open({ cwd });
-                  navigation?.openWorkspace({ serverId: target, workspaceId: workspace.id });
-                });
-              },
-              !cwd,
-            )
-          : null}
-      </View>
+      {!forResult ? (
+        <View style={ROW}>
+          {button(
+            project ? "Link folder" : "Create project",
+            () => {
+              void run(linkFolder);
+            },
+            !cwd,
+          )}
+          {project
+            ? button(
+                "Open files",
+                () => {
+                  void run(async () => {
+                    const workspace = await getPaseoClient(target).workspaces.open({ cwd });
+                    navigation?.openWorkspace({ serverId: target, workspaceId: workspace.id });
+                  });
+                },
+                !cwd,
+              )
+            : null}
+        </View>
+      ) : null}
       <Text style={muted}>
         Link an existing folder on each server. Shared mounts such as JuiceFS can provide the same
         files without a project copy.
@@ -91,7 +102,7 @@ export function HubWorkspace({ hub, ui }: { hub: HubController; ui: HubUi; props
             </View>
           ))}
       </View>
-      {session ? (
+      {session && !forResult ? (
         <View style={ROW}>
           {button(
             `Separate Git worktree: ${hub.separateWorktree ? "On" : "Off"}`,
@@ -101,25 +112,27 @@ export function HubWorkspace({ hub, ui }: { hub: HubController; ui: HubUi; props
           )}
         </View>
       ) : null}
-      <View style={ROW}>
-        {button(
-          session ? "Switch tool & continue" : "Start session",
-          () => {
-            void run(() => start(false));
-          },
-          !cwd || !modelId,
-        )}
-        {session
-          ? button(
-              "Fork session here",
-              () => {
-                void run(() => start(true));
-              },
-              !cwd || !modelId,
-            )
-          : null}
-      </View>
-      {session ? (
+      {!forResult ? (
+        <View style={ROW}>
+          {button(
+            session ? "Switch tool & continue" : "Start session",
+            () => {
+              void run(() => start(false));
+            },
+            !cwd || !modelId,
+          )}
+          {session
+            ? button(
+                "Fork session here",
+                () => {
+                  void run(() => start(true));
+                },
+                !cwd || !modelId,
+              )
+            : null}
+        </View>
+      ) : null}
+      {session && !forResult ? (
         <Text style={muted}>
           Switch keeps logical session {session.id}. Fork creates a branch referring to its parent
           revision; full history is not copied. Fork uses the selected existing folder unless

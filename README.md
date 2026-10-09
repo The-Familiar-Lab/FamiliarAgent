@@ -4,7 +4,7 @@ FamiliarAgent connects existing agent tools, conversations and project folders a
 
 The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, terminals, editor, file explorer, Git worktrees, browser panels and plugin system. FamiliarAgent adds the integration layer; it is a separate project and is not an official Paseo release.
 
-**Current version: 0.12.0.** The installed macOS app and Ubuntu runtime have passed the documented session-switching, pointer-fork, original-history and restart-recovery scenarios. Local verification passed 1,008 tests, type checks, lint and daemon transport checks. This is a development distribution; see the scope and account-specific limits in the Hub guide.
+**Current version: 0.13.0.** Adds selected result-to-input connections in a logical session. Local verification passed 1,262 tests, type checks, lint and daemon transport checks. The installed macOS app and Ubuntu runtime retain the documented session-switching, pointer-fork, original-history and restart-recovery behavior. This is a development distribution; see the scope and account-specific limits in the Hub guide.
 
 - [Using Familiar Hub](docs/familiar-hub.md)
 - [Development, verification and source history](docs/familiar-development.md)
@@ -17,6 +17,7 @@ The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, term
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Projects and servers | **All servers** brings connected hosts together. Link existing folders on each machine and choose a destination for each operation.                                                                                         |
 | Sessions             | Link a native conversation or an external history source. **Switch tool & continue** keeps the logical session; **Fork session here** creates a separate branch.                                                            |
+| Selected results     | **Use result…** connects a verified completed response to another native input in the same logical session. **Inputs / Results** shows source, destination and delivery status.                                             |
 | Shared context       | Revisioned memory, bounded continuation context and MCP access to original conversation pages. Conflicting writes are rejected.                                                                                             |
 | Tools and interfaces | Open supported native terminal and web interfaces inside FamiliarAgent, or launch installed desktop apps in their own windows. Register a command or URL, use available install recipes, or choose **Ask agent to set up**. |
 | Skills and MCP       | Map existing skill directories, inject supported session MCP configuration and explicitly share HTTP MCP definitions. Target-specific paths and executables remain on their owning servers.                                 |
