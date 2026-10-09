@@ -115,12 +115,14 @@ interface PluginWorkspacePanelBase {
 export interface PluginWorkspacePanelProps extends PluginNavigableHostProps {
   context: "workspace";
   workspaceId: string;
+  params?: Record<string, string>;
 }
 
 export interface PluginAgentPanelProps extends PluginNavigableHostProps {
   context: "agent";
   workspaceId: string;
   agentId: string;
+  params?: Record<string, string>;
 }
 
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {

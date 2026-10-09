@@ -26,6 +26,7 @@ import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RetainedChatContent } from "./retained-chat-content";
+import { useAgentDetailLookup } from "./use-agent-detail-lookup";
 import { SharedSessionBanner } from "./shared-session-banner";
 import { Composer } from "@/composer";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
@@ -495,12 +496,6 @@ function isNotFoundErrorMessage(message: string): boolean {
   return /agent not found|not found/i.test(message);
 }
 
-type AgentLookupState =
-  | { tag: "idle" }
-  | { tag: "loading" }
-  | { tag: "not_found"; message: string }
-  | { tag: "error"; message: string };
-
 function AgentPanelContent({
   serverId,
   workspaceId,
@@ -607,65 +602,20 @@ function AgentPanelBody({
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
-  const [lookupState, setLookupState] = useState<AgentLookupState>({ tag: "idle" });
-  const lookupAttemptTokenRef = useRef(0);
-  const retryAgentLookup = useCallback(() => setLookupState({ tag: "idle" }), []);
-
-  useEffect(() => {
-    lookupAttemptTokenRef.current += 1;
-    setLookupState({ tag: "idle" });
-  }, [agentId, serverId]);
-
-  useEffect(() => {
-    if (!agentId) {
-      return;
-    }
-    if (agentState.id) {
-      if (lookupState.tag !== "idle") {
-        setLookupState({ tag: "idle" });
-      }
-      return;
-    }
-    if (!client || !isConnected || !hasSession) {
-      return;
-    }
-    if (lookupState.tag === "loading" || lookupState.tag === "not_found") {
-      return;
-    }
-
-    setLookupState({ tag: "loading" });
-    const attemptToken = ++lookupAttemptTokenRef.current;
-
-    client
-      .fetchAgent({ agentId })
-      .then((result) => {
-        if (attemptToken !== lookupAttemptTokenRef.current) {
-          return;
-        }
-        if (!result) {
-          setLookupState({
-            tag: "not_found",
-            message: `Agent not found: ${agentId}`,
-          });
-          return;
-        }
-
-        storeFetchedAgentDetail({ serverId, result });
-        setLookupState({ tag: "idle" });
-        return;
-      })
-      .catch((error) => {
-        if (attemptToken !== lookupAttemptTokenRef.current) {
-          return;
-        }
-        const message = toErrorMessage(error);
-        if (isNotFoundErrorMessage(message)) {
-          setLookupState({ tag: "not_found", message });
-          return;
-        }
-        setLookupState({ tag: "error", message });
-      });
-  }, [agentId, agentState.id, client, hasSession, isConnected, lookupState.tag, serverId]);
+  const onLookupResolved = useCallback(
+    (result: NonNullable<Awaited<ReturnType<DaemonClient["fetchAgent"]>>>) => {
+      storeFetchedAgentDetail({ serverId, result });
+    },
+    [serverId],
+  );
+  const { state: lookupState, retry: retryAgentLookup } = useAgentDetailLookup({
+    serverId,
+    agentId,
+    present: Boolean(agentState.id),
+    enabled: isConnected && hasSession,
+    client,
+    onResolved: onLookupResolved,
+  });
 
   if (lookupState.tag === "not_found") {
     return (

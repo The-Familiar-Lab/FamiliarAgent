@@ -23,6 +23,7 @@ export type PluginWorkspaceTabTarget =
       pluginId: string;
       panelId: string;
       context: "workspace";
+      params?: Record<string, string>;
     }
   | {
       kind: "plugin";
@@ -30,6 +31,7 @@ export type PluginWorkspaceTabTarget =
       panelId: string;
       context: "agent";
       agentId: string;
+      params?: Record<string, string>;
     };
 
 export type WorkspaceTabTarget =

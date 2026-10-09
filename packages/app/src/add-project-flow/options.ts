@@ -45,7 +45,7 @@ export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOp
     options.push({
       id: "browse",
       label: "Browse",
-      description: "Choose or create a directory in Finder",
+      description: `Choose a folder on ${host.label}`,
     });
   }
   options.push({

@@ -1,3 +1,5 @@
+import { updateToolHost } from "./catalog.js";
+import { readWithDeadline } from "../read-deadline.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, ScrollView, Text, View } from "react-native";
 import { getPaseoClient } from "@getpaseo/plugin/client";
@@ -9,9 +11,10 @@ import {
   type apiKeyProvider,
   type setupAction,
 } from "../../shared/tool-setup.js";
-import { listTools } from "../../shared/tool-catalog.js";
+import { listTools, listResources, useSkills } from "../../shared/tool-catalog.js";
 import { readToolActionSettings, saveToolActionSettings } from "../../shared/tool-actions.js";
 import { hostRpc } from "../fleet.js";
+import { SetupAgentPicker } from "./setup-agent.js";
 import { ROW, type HubUi } from "./ui.js";
 import type { HubController } from "./controller.js";
 
@@ -43,6 +46,23 @@ async function applySetupSettings(
   return entries.length > 0;
 }
 
+async function applySetupSkills(
+  serverId: string,
+  skills: z.infer<typeof prepareToolSetup.output>["skills"],
+) {
+  if (!skills?.length) return;
+  const current = await hostRpc(serverId, listResources, {});
+  await hostRpc(serverId, useSkills, { expectedRevision: current.revision, skills });
+}
+
+function setupNotice(prepared: z.infer<typeof prepareToolSetup.output>): string {
+  if (prepared.skills?.length)
+    return "Skills registered on this server. Apply them to your project in Memory & Skills.";
+  if (prepared.settings?.length)
+    return "Native action settings saved on this server. Use in this session to continue.";
+  throw new Error("Setup returned no configuration or command.");
+}
+
 export function ToolSetupDialog({ hub, ui }: { hub: HubController; ui: HubUi }) {
   const selected = hub.setupTarget;
   return selected ? (
@@ -68,12 +88,15 @@ function SetupContent({
   const tool = hub.tools.find(
     (item) => item.serverId === serverId && item.tool.id === toolId,
   )?.tool;
+  const [delegate, setDelegate] = useState(selected.intent === "ask");
   const [status, setStatus] = useState<ToolSetupStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [provider, setProvider] = useState<z.infer<typeof apiKeyProvider>>("openai");
   const alive = useRef(true);
+  const checkVersion = useRef(0);
   const latest = useRef(hub);
   latest.current = hub;
   useEffect(() => {
@@ -83,22 +106,32 @@ function SetupContent({
     };
   }, []);
   const check = useCallback(async () => {
+    const version = ++checkVersion.current;
+    const current = () => alive.current && checkVersion.current === version;
+    setChecking(true);
     setBusy(true);
     setError("");
     try {
-      const value = await hostRpc(serverId, readToolSetup, { id: toolId });
-      if (!alive.current) return;
-      setStatus(value);
-      const tools = await hostRpc(serverId, listTools, {});
-      if (!alive.current) return;
-      latest.current.setTools((items) => [
-        ...items.filter((item) => item.serverId !== serverId),
-        ...tools.map((entry) => ({ serverId, tool: entry })),
+      await Promise.all([
+        readWithDeadline(
+          hostRpc(serverId, readToolSetup, { id: toolId }),
+          "Tool setup status",
+        ).then((value) => {
+          if (current()) setStatus(value);
+          return undefined;
+        }),
+        readWithDeadline(hostRpc(serverId, listTools, {}), "Tool catalog").then((tools) => {
+          if (current()) latest.current.setTools((items) => updateToolHost(items, serverId, tools));
+          return undefined;
+        }),
       ]);
     } catch (failure) {
-      if (alive.current) setError(failure instanceof Error ? failure.message : String(failure));
+      if (current()) setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
-      if (alive.current) setBusy(false);
+      if (current()) {
+        setBusy(false);
+        setChecking(false);
+      }
     }
   }, [serverId, toolId]);
   useEffect(() => {
@@ -106,6 +139,8 @@ function SetupContent({
   }, [check]);
   const perform = async (action: z.infer<typeof setupAction>) => {
     if (busy) return;
+    checkVersion.current++;
+    setChecking(false);
     setBusy(true);
     setError("");
     try {
@@ -122,12 +157,12 @@ function SetupContent({
         action === "install",
       );
       if (!alive.current) return;
+      await applySetupSkills(serverId, prepared.skills);
+      if (!alive.current) return;
       if (applied) latest.current.updatedToolSettings(serverId, toolId);
       const { plan } = prepared;
       if (!plan) {
-        if (!prepared.settings?.length)
-          throw new Error("Setup returned no configuration or command.");
-        setNotice("Native action settings saved on this server. Use in this session to continue.");
+        setNotice(setupNotice(prepared));
         return;
       }
       if (!plan.command) throw new Error("Setup did not return a terminal command.");
@@ -158,8 +193,8 @@ function SetupContent({
     }
   };
   const close = useCallback(() => {
-    if (!busy) hub.setSetupTarget(null);
-  }, [busy, hub]);
+    if (!busy || checking) hub.setSetupTarget(null);
+  }, [busy, checking, hub]);
   const dialogStyle = useMemo(
     () => ({
       maxWidth: 720,
@@ -170,16 +205,7 @@ function SetupContent({
     }),
     [ui.colors.surface1],
   );
-  const continueSession = () => {
-    hub.setTarget(serverId);
-    hub.setToolId(toolId);
-    hub.setSetupTarget(null);
-    const destination = tool?.nativeProvider ? "Sessions" : "Tools";
-    hub.setTab(selected.returnTab === "Inputs / Results" ? selected.returnTab : destination);
-    hub.setNotice(
-      `${tool?.name ?? toolId} selected for ${hub.session?.title ?? "this session"} on ${hub.hostName(serverId)}. ${tool?.nativeProvider ? "Choose a model and start or continue." : "Choose a native action or open its original interface below."}`,
-    );
-  };
+  const continueSession = () => hub.useSetupTool(serverId, toolId, selected.returnTab);
   return (
     <Modal transparent visible animationType="fade" onRequestClose={close}>
       <View style={OVERLAY}>
@@ -193,6 +219,40 @@ function SetupContent({
             Install here, complete the original sign-in, then return to your session. Credentials
             stay on this server.
           </Text>
+          {hub.tools
+            .filter(
+              (item) =>
+                item.tool.id === toolId &&
+                item.tool.installed &&
+                item.serverId !== serverId &&
+                hub.hosts?.some(
+                  (host) => host.serverId === item.serverId && host.status === "online",
+                ),
+            )
+            .map((item) => (
+              <View key={item.serverId}>
+                {ui.button(
+                  `Use installation on ${hub.hostName(item.serverId)}`,
+                  () => {
+                    hub.openSetup(item.serverId, toolId);
+                    const mapped = hub.project?.resources.some(
+                      (resource) =>
+                        resource.kind === "codebase" && resource.serverId === item.serverId,
+                    );
+                    hub.setNotice(
+                      mapped
+                        ? "Using the existing installation and linked folder. Check its account before continuing."
+                        : "Using the existing installation. Choose or link this project's folder on that server before launching.",
+                    );
+                  },
+                  busy && !checking,
+                )}
+                <Text style={ui.muted}>
+                  Uses that server&apos;s existing account; no credentials are copied. Installation
+                  does not confirm sign-in.
+                </Text>
+              </View>
+            ))}
           {busy ? <Text style={ui.text}>Checking / opening setup…</Text> : null}
           {status ? (
             <>
@@ -242,6 +302,9 @@ function SetupContent({
             </Text>
           ) : null}
           {notice ? <Text style={ui.text}>{notice}</Text> : null}
+          {delegate && tool ? (
+            <SetupAgentPicker hub={hub} ui={ui} tool={tool} serverId={serverId} />
+          ) : null}
           <View style={ROW}>
             {ui.button(
               "Check setup",
@@ -255,17 +318,8 @@ function SetupContent({
               continueSession,
               busy || status?.installation !== "installed" || status.account === "sign-in-required",
             )}
-            {tool
-              ? ui.button(
-                  "Ask agent to set up",
-                  () => {
-                    close();
-                    void hub.run(() => hub.askSetup(serverId, tool));
-                  },
-                  busy || !hub.cwd,
-                )
-              : null}
-            {ui.button("Close", close, busy)}
+            {tool ? ui.button("Ask agent to set up", () => setDelegate(true), busy) : null}
+            {ui.button("Close", close, busy && !checking)}
           </View>
         </ScrollView>
       </View>

@@ -97,7 +97,7 @@ export class TerminalStreamController {
         if (message.type !== "terminal_stream_exit" || this.subscription !== subscription) return;
         if (message.payload.error)
           this.failAttach(nextTerminalId, new Error(message.payload.error));
-        else this.handleTerminalExit({ terminalId: nextTerminalId });
+        else this.handleTerminalExit({ ...message.payload, terminalId: nextTerminalId });
       },
     });
     void subscription.ready
@@ -141,7 +141,12 @@ export class TerminalStreamController {
     });
   }
 
-  handleTerminalExit(input: { terminalId: string }): void {
+  handleTerminalExit(input: {
+    terminalId: string;
+    exitCode?: number | null;
+    signal?: number | null;
+    lastOutputLines?: string[];
+  }): void {
     if (this.disposed || input.terminalId !== this.terminalId) {
       return;
     }
@@ -149,10 +154,13 @@ export class TerminalStreamController {
     this.terminalId = null;
     void this.subscription?.release().catch(console.error);
     this.subscription = null;
+    let reason = TERMINAL_EXITED_ERROR;
+    if (input.signal != null) reason += ` (signal ${input.signal})`;
+    else if (input.exitCode != null) reason += ` (exit code ${input.exitCode})`;
     this.options.onStatusChange?.({
       terminalId: input.terminalId,
       isAttaching: false,
-      error: TERMINAL_EXITED_ERROR,
+      error: [reason, ...(input.lastOutputLines ?? [])].join("\n"),
     });
   }
 

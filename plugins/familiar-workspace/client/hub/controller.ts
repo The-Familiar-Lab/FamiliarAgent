@@ -1,3 +1,5 @@
+import { updateToolHost } from "./catalog.js";
+import { readWithDeadline } from "../read-deadline.js";
 import {
   useCallback,
   useEffect,
@@ -47,10 +49,12 @@ import {
   type FleetSnapshot,
 } from "../fleet.js";
 import type { infer as Infer } from "zod";
-import { resolveSetupModel, setupInstructions } from "./setup.js";
+import { resolveSetupModel, setupInstructions, batchSetupInstructions } from "./setup.js";
 import { readResourceCatalog, type HostResources } from "./resources.js";
+import { readSetupWorkspace } from "../../shared/tool-setup.js";
 import { readHistory } from "../../shared/history.js";
 import { findNativeSession, CATALOG_PAGE_SIZE, forkWorktree } from "./entry.js";
+import type { SessionChoice } from "./browse.js";
 import {
   TABS,
   readSetupReturn,
@@ -79,6 +83,11 @@ function forkTitle(draft: string, parent: string): string {
   const title = draft.trim();
   return title && title !== parent ? title : `${parent} fork`;
 }
+function updateFleetHost(items: FleetSnapshot[], value: FleetSnapshot) {
+  return [...items.filter((item) => item.server.serverId !== value.server.serverId), value];
+}
+const withoutServer = (items: string[], id: string) => items.filter((item) => item !== id);
+
 export function useHubController(props: HubProps) {
   const { host: entryHost, theme, navigation } = props;
   const hosts = useHosts();
@@ -91,6 +100,7 @@ export function useHubController(props: HubProps) {
       entryHost.id,
   );
   const restoreVersion = useRef(0);
+  const selectionVersion = useRef(0);
   const pendingSetupReturn = useRef<SetupReturn | null>(null);
   const cancelSetupRestore = useCallback(() => {
     restoreVersion.current++;
@@ -107,6 +117,7 @@ export function useHubController(props: HubProps) {
     <T>(setter: Dispatch<SetStateAction<T>>) =>
     (value: SetStateAction<T>) => {
       cancelSetupRestore();
+      selectionVersion.current++;
       setter(value);
     };
   const host = {
@@ -121,7 +132,15 @@ export function useHubController(props: HubProps) {
     [sessions, setSessions] = useState<Infer<typeof compositionSessionSummary>[]>([]);
   const [project, setProject] = useState<CompositionProject | null>(null),
     [session, setSession] = useState<CompositionSession | null>(null);
-  const [target, setTarget] = useState(entryHost.id),
+  const pendingTool = useRef<{
+    serverId: string;
+    toolId: string;
+    sourceServer: string;
+    sourceAgent: string;
+  } | null>(null);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
+  const [entryChoice, setEntryChoice] = useState<SessionChoice | null>(null);
+  const [target, setTarget] = useState(props.params?.serverId ?? entryHost.id),
     [cwd, setCwd] = useState(""),
     [title, setTitle] = useState("");
   const selectTarget = useCallback(
@@ -156,11 +175,12 @@ export function useHubController(props: HubProps) {
     serverId: string;
     toolId: string;
     returnTab?: Tab;
+    intent?: "ask";
   } | null>(null);
-  const openSetup = (serverId: string, selectedToolId: string) => {
+  const openSetup = (serverId: string, selectedToolId: string, intent?: "ask") => {
     selectTarget(serverId);
     setToolId(selectedToolId);
-    setSetupTarget({ serverId, toolId: selectedToolId, returnTab: tab });
+    setSetupTarget({ serverId, toolId: selectedToolId, returnTab: tab, intent });
   };
   const [separateWorktree, setSeparateWorktree] = useState(false);
   const [resourceCatalog, setResourceCatalog] = useState<HostResources[]>([]);
@@ -207,7 +227,9 @@ export function useHubController(props: HubProps) {
     [fail],
   );
   const explicitEntry = Boolean(
-    props.params?.agentId || (props.params?.historyServerId && props.params?.historyId),
+    props.params?.agentId ||
+    props.params?.toolId ||
+    (props.params?.historyServerId && props.params?.historyId),
   );
   const catalogOnline = hosts.some((item) => item.serverId === host.id && item.status === "online");
   useEffect(() => {
@@ -272,57 +294,92 @@ export function useHubController(props: HubProps) {
     (item) => item.serverId === target && item.tool.id === toolId,
   )?.tool;
   const refreshGeneration = useRef(0);
+  const [refreshing, setRefreshing] = useState(false);
   const refresh = useCallback(async () => {
     const generation = ++refreshGeneration.current;
-    const [native, shared] = await Promise.allSettled([
-      readFleet(hosts),
-      hostRpc(host.id, listComposition, {
-        limit: CATALOG_PAGE_SIZE,
-        offset: catalogOffset,
-        query: catalogQuery,
-        projectId: project?.id,
+    setRefreshing(true);
+    await Promise.allSettled([
+      readFleet(hosts, (value) => {
+        if (generation === refreshGeneration.current)
+          setFleet((items) => updateFleetHost(items, value));
+      }).then((value) => {
+        if (generation === refreshGeneration.current) setFleet(value);
+        return undefined;
       }),
-    ]);
-    if (generation !== refreshGeneration.current) return;
-    if (native.status === "fulfilled") setFleet(native.value);
-    else fail(native.reason);
-    if (shared.status === "rejected") {
-      fail(shared.reason);
-      return;
-    }
-    const catalog = shared.value;
-    // List summaries stay bounded; only selected records carry the actual memory and resources.
-    setProjects(catalog.projects);
-    setSessions(catalog.sessions);
-    setCatalogTotal(catalog.total);
-  }, [host.id, hosts, catalogOffset, catalogQuery, project?.id, fail]);
-  useEffect(() => {
-    void refresh().catch(fail);
-  }, [refresh, fail]);
-  useEffect(() => {
-    let current = true;
-    void Promise.all(
-      hosts
-        .filter((item) => item.status === "online")
-        .map(async (server) => {
-          try {
-            return (await hostRpc(server.serverId, listTools, {})).map((tool) => ({
-              serverId: server.serverId,
-              tool,
-            }));
-          } catch (value) {
-            if (current) fail(value);
-            return [];
-          }
+      readWithDeadline(
+        hostRpc(host.id, listComposition, {
+          limit: CATALOG_PAGE_SIZE,
+          offset: catalogOffset,
+          query: catalogQuery,
         }),
-    ).then((items) => {
-      if (current) setTools(items.flat());
-      return undefined;
-    });
+        "Shared session catalog",
+      )
+        .then((catalog) => {
+          if (generation !== refreshGeneration.current) return;
+          setProjects(catalog.projects);
+          setSessions(catalog.sessions);
+          setCatalogTotal(catalog.total);
+          setCatalogLoaded(true);
+          return undefined;
+        })
+        .catch((value: unknown) => {
+          if (generation === refreshGeneration.current) fail(value);
+        }),
+    ]);
+    if (generation === refreshGeneration.current) setRefreshing(false);
+  }, [host.id, hosts, catalogOffset, catalogQuery, fail]);
+  useEffect(() => {
+    const counter = refreshGeneration;
+    void refresh().catch(fail);
     return () => {
-      current = false;
+      counter.current++;
     };
-  }, [hosts, fail]);
+  }, [refresh, fail]);
+  const toolReads = useRef(new Map<string, number>());
+  const [toolCatalogErrors, setToolCatalogErrors] = useState<Record<string, string>>({});
+  const [loadingToolServers, setLoadingToolServers] = useState<string[]>([]);
+  const reloadTools = useCallback(
+    async (serverId?: string) => {
+      await Promise.all(
+        hosts
+          .filter(
+            (server) => server.status === "online" && (!serverId || server.serverId === serverId),
+          )
+          .map(async (server) => {
+            const id = server.serverId;
+            const version = (toolReads.current.get(id) ?? 0) + 1;
+            toolReads.current.set(id, version);
+            setLoadingToolServers((items) => [...new Set([...items, id])]);
+            setToolCatalogErrors((items) => ({ ...items, [id]: "" }));
+            try {
+              const result = await readWithDeadline(
+                hostRpc(id, listTools, {}),
+                `${server.label} tool catalog`,
+              );
+              if (toolReads.current.get(id) !== version) return;
+              setTools((items) => updateToolHost(items, id, result));
+            } catch (value) {
+              if (toolReads.current.get(id) === version)
+                setToolCatalogErrors((items) => ({
+                  ...items,
+                  [id]: value instanceof Error ? value.message : String(value),
+                }));
+            } finally {
+              if (toolReads.current.get(id) === version)
+                setLoadingToolServers((items) => withoutServer(items, id));
+            }
+          }),
+      );
+    },
+    [hosts],
+  );
+  useEffect(() => {
+    const reads = toolReads.current;
+    void reloadTools();
+    return () => {
+      for (const [id, version] of reads) reads.set(id, version + 1);
+    };
+  }, [reloadTools]);
   useEffect(() => {
     let current = true;
     setModels([]);
@@ -377,8 +434,10 @@ export function useHubController(props: HubProps) {
     );
   };
   const selectProject = async (id: string) => {
+    const version = ++selectionVersion.current;
     cancelSetupRestore();
     const value = await hostRpc(host.id, readCompositionProject, { id });
+    if (version !== selectionVersion.current) return;
     setProject(value);
     setCatalogOffset(0);
     setSession(null);
@@ -391,10 +450,13 @@ export function useHubController(props: HubProps) {
   const selectSession = useCallback(
     async (id: string) => {
       cancelSetupRestore();
+      const version = ++selectionVersion.current;
       const value = await hostRpc(host.id, readComposition, { id });
       const owner = await hostRpc(host.id, readCompositionProject, {
         id: value.projectId,
       });
+      if (version !== selectionVersion.current) return false;
+      setEntryChoice(null);
       setProject(owner);
       setCatalogOffset(0);
       setSession(value);
@@ -403,12 +465,13 @@ export function useHubController(props: HubProps) {
       setTab("Sessions");
       const endpoint = value.endpoints.find((item) => item.id === value.activeEndpointId);
       const destination = hosts.find((item) => item.serverId === endpoint?.serverId);
-      await connectContextSources(host.id, value, destination, hosts);
       if (endpoint) {
         setTarget(endpoint.serverId);
         setCwd(endpoint.cwd);
         setToolId(endpoint.harness ?? endpoint.provider);
       }
+      await connectContextSources(host.id, value, destination, hosts);
+      return version === selectionVersion.current;
     },
     [host.id, hosts, cancelSetupRestore],
   );
@@ -477,17 +540,50 @@ export function useHubController(props: HubProps) {
     },
     [host.id, hosts],
   );
+  const completeNativeChoice = useCallback(
+    (serverId: string, agent: PaseoAgent, owner?: CompositionProject) => {
+      const requested = pendingTool.current;
+      const handoff =
+        requested?.sourceServer === serverId && requested.sourceAgent === agent.id
+          ? requested
+          : null;
+      pendingTool.current = null;
+      setEntryChoice(null);
+      const id = handoff?.toolId ?? agent.provider;
+      const destination = handoff?.serverId ?? serverId;
+      const native = tools.find((item) => item.serverId === destination && item.tool.id === id)
+        ?.tool.nativeProvider;
+      setToolId(id);
+      setTarget(destination);
+      setTab(handoff && !native ? "Tools" : "Sessions");
+      setCwd(
+        destination === serverId
+          ? agent.cwd
+          : (owner?.resources.find(
+              (item) => item.kind === "codebase" && item.serverId === destination,
+            )?.locator ?? ""),
+      );
+    },
+    [tools],
+  );
   const attachNative = useCallback(
     async (serverId: string, agent: PaseoAgent) => {
       const existing = await findNativeSession(serverId, agent.id, (input) =>
         hostRpc(host.id, listComposition, input),
       );
       if (existing) {
-        await selectSession(existing.id);
+        if (await selectSession(existing.id)) completeNativeChoice(serverId, agent);
         return;
       }
       const currentProject =
-        project ??
+        (project?.resources.some(
+          (resource) =>
+            resource.kind === "codebase" &&
+            resource.serverId === serverId &&
+            resource.locator === agent.cwd,
+        )
+          ? project
+          : null) ??
         (await hostRpc(host.id, saveCompositionProject, {
           id: operationId(),
           title: agent.cwd.split("/").findLast(Boolean) || "Project",
@@ -520,18 +616,26 @@ export function useHubController(props: HubProps) {
           cwd: agent.cwd,
         },
       });
+      completeNativeChoice(serverId, agent, currentProject);
       setProject(currentProject);
       setCatalogOffset(0);
       setMemory(created.memory);
       setSession(created);
       setTitle(created.title);
-      setTarget(serverId);
-      setCwd(agent.cwd);
       await refresh();
       await renewLinkedSession(created);
       setNotice("Linked to the original session. Its conversation was not copied.");
     },
-    [project, host.id, hosts, hostName, refresh, selectSession, renewLinkedSession],
+    [
+      project,
+      host.id,
+      hosts,
+      hostName,
+      refresh,
+      selectSession,
+      renewLinkedSession,
+      completeNativeChoice,
+    ],
   );
   const linkCreatedWorkspace = async (
     owner: CompositionProject,
@@ -608,6 +712,30 @@ export function useHubController(props: HubProps) {
     await renewLinkedSession(next);
     return next;
   };
+  const logicalForLaunch = async (owner: CompositionProject, serverId: string, fork: boolean) => {
+    const destination = hosts.find((item) => item.serverId === serverId);
+    if (session && destination) await connectContextSources(host.id, session, destination, hosts);
+    let logical: CompositionSession;
+    if (session && fork)
+      logical = await hostRpc(host.id, forkComposition, {
+        id: session.id,
+        expectedRevision: session.revision,
+        title: forkTitle(title, session.title),
+        operationId: operationId(),
+      });
+    else
+      logical =
+        session ??
+        (await hostRpc(host.id, createComposition, {
+          projectId: owner.id,
+          title: title.trim() || owner.title,
+          operationId: operationId(),
+        }));
+    setSession(logical);
+    if (fork) setTitle(logical.title);
+    if (destination) await connectContextSources(host.id, logical, destination, hosts);
+    return logical;
+  };
   const start = async (fork: boolean) => {
     if (!selectedTool?.nativeProvider || !modelId)
       throw new Error("Choose an available native agent and model.");
@@ -620,25 +748,7 @@ export function useHubController(props: HubProps) {
       throw new Error(
         "Link this server's existing project folder first. A session fork does not copy project files.",
       );
-    if (session && targetHost) await connectContextSources(host.id, session, targetHost, hosts);
-    let logical: CompositionSession;
-    if (session && fork)
-      logical = await hostRpc(host.id, forkComposition, {
-        id: session.id,
-        expectedRevision: session.revision,
-        title: forkTitle(title, session.title),
-        operationId: operationId(),
-      });
-    else if (session) logical = session;
-    else
-      logical = await hostRpc(host.id, createComposition, {
-        projectId: owner.id,
-        title: title.trim() || owner.title,
-        operationId: operationId(),
-      });
-    setSession(logical);
-    if (fork) setTitle(logical.title);
-    if (targetHost) await connectContextSources(host.id, logical, targetHost, hosts);
+    const logical = await logicalForLaunch(owner, target, fork);
     const { handle } = await createNativeTarget(owner, logical, { fork });
     await refresh();
     navigation?.openAgent({ serverId: target, agentId: handle.id });
@@ -692,9 +802,7 @@ export function useHubController(props: HubProps) {
     const next = await bindCreatedAgent(owner, logical, handle, selection);
     return { session: next, handle };
   };
-  const prepareExternalContext = async (serverId: string) => {
-    const destination = hosts.find((item) => item.serverId === serverId);
-
+  const prepareExternalContext = async (serverId: string, fork: boolean) => {
     const owner = await ensureProject();
     if (
       !owner.resources.some(
@@ -702,15 +810,7 @@ export function useHubController(props: HubProps) {
       )
     )
       throw new Error("Link this server's existing project folder first.");
-    const logical =
-      session ??
-      (await hostRpc(host.id, createComposition, {
-        projectId: owner.id,
-        title: title.trim() || owner.title,
-        operationId: operationId(),
-      }));
-    setSession(logical);
-    if (destination) await connectContextSources(host.id, logical, destination, hosts);
+    const logical = await logicalForLaunch(owner, serverId, fork);
     const context = await continuationContext(host.id, logical, hosts);
     const saved = await hostRpc(serverId, writeToolContext, {
       sessionId: logical.id,
@@ -723,12 +823,13 @@ export function useHubController(props: HubProps) {
     tool: ToolEntry,
     action: "launch" | "install",
     surface?: "web" | "desktop" | "terminal",
+    options: { fork?: boolean } = {},
   ) => {
     if (!cwd) throw new Error("Choose the destination project folder first.");
     const destination = hosts.find((item) => item.serverId === serverId);
     const { logical, contextPath } =
       action === "launch"
-        ? await prepareExternalContext(serverId)
+        ? await prepareExternalContext(serverId, options.fork === true)
         : { logical: null, contextPath: undefined };
     const plan = await hostRpc(serverId, prepareTool, {
       id: tool.id,
@@ -853,6 +954,8 @@ export function useHubController(props: HubProps) {
             operationId: operationId(),
             title: session.title,
             memory: session.memory,
+            memoryEnabled: session.memoryEnabled,
+            disabledResourceIds: session.disabledResourceIds,
             resources: [...session.resources, reference],
           })
         : await hostRpc(host.id, createComposition, {
@@ -878,16 +981,21 @@ export function useHubController(props: HubProps) {
   const entryKey = useRef<string | null>(null);
   useEffect(() => {
     const params = props.params;
-    if (!params?.agentId && !(params?.historyServerId && params?.historyId)) return;
+    if (!catalogOnline || (!params?.agentId && !(params?.historyServerId && params?.historyId)))
+      return;
     const key = JSON.stringify([
       entryHost.id,
       host.id,
       params.agentId,
+      params.serverId,
+      params.toolId,
+      params.setup,
       params.historyServerId,
       params.historyId,
     ]);
     if (entryKey.current === key) return;
     entryKey.current = key;
+    const entryVersion = restoreVersion.current;
     void run(async () => {
       if (params.historyServerId && params.historyId) {
         const source = await hostRpc(params.historyServerId, readHistory, {
@@ -897,19 +1005,58 @@ export function useHubController(props: HubProps) {
         });
         await linkHistory(params.historyServerId, source);
       } else if (params.agentId) {
-        const existing = await findNativeSession(entryHost.id, params.agentId, (input) =>
+        const sourceServer = params.serverId ?? entryHost.id;
+        const existing = await findNativeSession(sourceServer, params.agentId, (input) =>
           hostRpc(host.id, listComposition, input),
         );
-        if (existing) await selectSession(existing.id);
-        else {
-          const result = await getPaseoClient(entryHost.id).agents.ref(params.agentId).refresh();
+        if (entryKey.current !== key || entryVersion !== restoreVersion.current) return;
+        if (existing) {
+          const applied = await selectSession(existing.id);
+          if (!applied || entryKey.current !== key) return;
+          const origin = existing.endpoints.find(
+            (endpoint) => endpoint.serverId === sourceServer && endpoint.agentId === params.agentId,
+          );
+          if (origin) {
+            setTarget(sourceServer);
+            setCwd(origin.cwd);
+            setToolId(origin.harness ?? origin.provider);
+          }
+        } else {
+          const result = await getPaseoClient(sourceServer).agents.ref(params.agentId).refresh();
+          if (entryKey.current !== key || entryVersion !== restoreVersion.current) return;
           if (!result) throw new Error("This native conversation is no longer available.");
-          await attachNative(entryHost.id, result.agent);
+          setSession(null);
+          setProject(null);
+          setEntryChoice({ kind: "native", serverId: sourceServer, agent: result.agent });
+          setTarget(sourceServer);
+          setCwd(result.agent.cwd);
+          setTitle(result.agent.title || "Untitled conversation");
+          setToolId(result.agent.provider);
           setTab("Sessions");
         }
       }
+      if (params.toolId) {
+        const serverId = params.serverId ?? entryHost.id;
+        setTarget(serverId);
+        setToolId(params.toolId);
+        if (params.setup === "1")
+          setSetupTarget({ serverId, toolId: params.toolId, returnTab: "Sessions" });
+      }
     });
-  }, [props.params, host.id, entryHost.id, run, linkHistory, selectSession, attachNative]);
+  }, [props.params, host.id, entryHost.id, catalogOnline, run, linkHistory, selectSession]);
+  useEffect(() => {
+    const params = props.params;
+    if (!params?.toolId || params.agentId) return;
+    const key = JSON.stringify([params.serverId, params.toolId, params.setup, params.cwd]);
+    if (entryKey.current === key) return;
+    entryKey.current = key;
+    const serverId = params.serverId ?? entryHost.id;
+    setTarget(serverId);
+    setToolId(params.toolId);
+    if (params.cwd) setCwd(params.cwd);
+    if (params.setup === "1")
+      setSetupTarget({ serverId, toolId: params.toolId, returnTab: "Sessions" });
+  }, [props.params, entryHost.id]);
   const reloadMemory = async () => {
     if (session) {
       const next = await hostRpc(host.id, readComposition, { id: session.id });
@@ -932,6 +1079,8 @@ export function useHubController(props: HubProps) {
         operationId: operationId(),
         title: session.title,
         resources: session.resources,
+        memoryEnabled: session.memoryEnabled,
+        disabledResourceIds: session.disabledResourceIds,
         memory,
       });
       setSession(next);
@@ -950,38 +1099,125 @@ export function useHubController(props: HubProps) {
       "Shared memory saved. Connected sessions can read it; future tool switches include it.",
     );
   };
-  const askSetup = async (serverId: string, tool: ToolEntry) => {
-    if (!cwd.trim() || target !== serverId)
-      throw new Error("Choose this server and a project folder first.");
-    const candidates = tools
-      .filter(
-        (item) => item.serverId === serverId && item.tool.installed && item.tool.nativeProvider,
-      )
-      .map((item) => item.tool.nativeProvider!);
-    const api = getPaseoClient(serverId);
-    const selected = await resolveSetupModel(candidates, (provider) =>
-      api.providers.listModels(provider, { cwd }),
-    );
-    const agent = await api.agents.create({
-      cwd,
-      title: `Set up ${tool.name}`,
-      config: {
-        provider: `${selected.provider}/${selected.model}`,
-        thinkingOptionId: selected.thinking,
-      },
-      idempotencyKey: operationId(),
+  const saveSessionPreferences = async (
+    next: Pick<CompositionSession, "resources" | "disabledResourceIds" | "memoryEnabled">,
+  ) => {
+    if (!session) throw new Error("Select a session first.");
+    const version = selectionVersion.current;
+    const saved = await hostRpc(host.id, updateComposition, {
+      id: session.id,
+      expectedRevision: session.revision,
+      operationId: operationId(),
+      title: session.title,
+      memory: session.memory,
+      ...next,
     });
-    navigation?.openAgent({ serverId, agentId: agent.id });
-    await agent.send(setupInstructions(tool, cwd));
-    setNotice(
-      `Setup agent started on ${hostName(
+    if (version === selectionVersion.current) setSession(saved);
+    await renewLinkedSession(saved);
+    await refresh();
+    return saved;
+  };
+  const useSetupTool = (serverId: string, id: string, returnTab?: Tab) => {
+    selectTarget(serverId);
+    setToolId(id);
+    setSetupTarget(null);
+    if (!session && entryChoice?.kind === "native") {
+      pendingTool.current = {
         serverId,
-      )}. Follow its conversation for progress and any required login.`,
+        toolId: id,
+        sourceServer: entryChoice.serverId,
+        sourceAgent: entryChoice.agent.id,
+      };
+      setTab("Sessions");
+      setNotice(
+        "Preview your current conversation, then Select session to continue it with the chosen tool.",
+      );
+      return;
+    }
+    const native = tools.find((item) => item.serverId === serverId && item.tool.id === id)?.tool
+      .nativeProvider;
+    const destination = native ? "Sessions" : "Tools";
+    setTab(returnTab === "Inputs / Results" ? returnTab : destination);
+    setNotice(
+      `Tool selected on ${hostName(serverId)}. Choose a native action or continue the session. Link this server's project folder if needed.`,
+    );
+  };
+  const askSetup = async (
+    serverId: string,
+    tool: ToolEntry,
+    choice?: { provider?: string; agentId?: string; cwd?: string; tools?: string[] },
+  ) => {
+    if (!hosts.some((item) => item.serverId === serverId && item.status === "online"))
+      throw new Error("Reconnect the selected setup server first.");
+    let directory = choice?.cwd ?? (target === serverId ? cwd : "");
+    const batch = choice?.tools;
+    if (batch && (!batch.length || batch.length > 64 || new Set(batch).size !== batch.length))
+      throw new Error("Choose a nonempty, unique list of tools from this server's catalog.");
+    const selectedTools = batch?.map((id) => {
+      const selectedToolEntry = tools.find(
+        (item) => item.serverId === serverId && item.tool.id === id,
+      )?.tool;
+      if (!selectedToolEntry)
+        throw new Error(`Tool ${id} is not in this server's catalog. Refresh the tool list.`);
+      return selectedToolEntry;
+    });
+    let setupOnly = false;
+    const instruction = (folder: string, provider?: string) =>
+      selectedTools
+        ? batchSetupInstructions(selectedTools, folder, setupOnly, provider)
+        : setupInstructions(tool, folder, setupOnly, provider);
+    const api = getPaseoClient(serverId);
+    if (choice?.agentId) {
+      const agent = api.agents.ref(choice.agentId);
+      const snapshot = await agent.refresh();
+      if (!snapshot) throw new Error("The selected setup agent is no longer available.");
+      rememberSetupReturn(target, toolId);
+      await agent.send(instruction(directory || snapshot.agent.cwd, snapshot.agent.provider), {
+        activeTurnBehavior: "reject",
+      });
+      navigation?.openAgent({ serverId, agentId: agent.id });
+    } else {
+      if (!directory.trim()) {
+        directory = (await hostRpc(serverId, readSetupWorkspace, {})).cwd;
+        setupOnly = true;
+      }
+      const candidates = tools
+        .filter(
+          (item) =>
+            item.serverId === serverId &&
+            item.tool.installed &&
+            item.tool.nativeProvider &&
+            (!choice?.provider || item.tool.nativeProvider === choice.provider),
+        )
+        .map((item) => item.tool.nativeProvider!);
+      const selected = await resolveSetupModel(candidates, (provider) =>
+        api.providers.listModels(provider, { cwd: directory }),
+      );
+      rememberSetupReturn(target, toolId);
+      const agent = await api.agents.create({
+        cwd: directory,
+        title: selectedTools ? `Set up ${selectedTools.length} tools` : `Set up ${tool.name}`,
+        config: {
+          provider: `${selected.provider}/${selected.model}`,
+          thinkingOptionId: selected.thinking,
+        },
+        idempotencyKey: operationId(),
+      });
+      navigation?.openAgent({ serverId, agentId: agent.id });
+      await agent.send(instruction(directory, selected.provider), { activeTurnBehavior: "reject" });
+    }
+    setSetupTarget(null);
+    setNotice(
+      `Setup requested on ${hostName(serverId)}. Follow the selected agent for progress and any required login.`,
     );
     await refresh();
   };
+
   return {
     host,
+    entryChoice,
+    catalogLoaded,
+    useSetupTool,
     theme,
     navigation,
     hosts,
@@ -1009,6 +1245,9 @@ export function useHubController(props: HubProps) {
     setTitle: navigate(setTitle),
     tools,
     setTools,
+    reloadTools,
+    toolCatalogErrors,
+    loadingToolServers,
     toolId,
     setToolId: navigate(setToolId),
     setupTarget,
@@ -1033,6 +1272,7 @@ export function useHubController(props: HubProps) {
     saveOwnedResources,
     reloadMemory,
     saveMemory,
+    saveSessionPreferences,
     askSetup,
     catalogOffset,
     setCatalogOffset,
@@ -1069,6 +1309,7 @@ export function useHubController(props: HubProps) {
     targetHost,
     selectedTool,
     refresh,
+    refreshing,
     selectProject,
     selectSession,
     mapping,

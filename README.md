@@ -4,7 +4,7 @@ FamiliarAgent connects existing agent tools, conversations and project folders a
 
 The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, terminals, editor, file explorer, Git worktrees, browser panels and plugin system. FamiliarAgent adds the integration layer; it is a separate project and is not an official Paseo release.
 
-**Current source version: 0.14.0.** Adds original-tool actions, saved native settings and result connections within a logical session. The [native actions guide](docs/native-tool-actions.md) distinguishes actual native workflow checks from account prerequisites and unverified paths. The Mac desktop and Ubuntu runtime passed installed-bundle, native-action UI, same-session result delivery and cross-server lazy-read checks. The final fast check passed 1,394 tests plus type and lint checks. The earlier 0.13.0 distribution passed the documented session-switching, pointer-fork, original-history and restart-recovery checks.
+**Current source version: 0.16.0.** Adds guided account-first tool setup, selectable installation agents, reusable Codex/Claude connections for Goose, project/server conversation browsing, in-session skill management, and reliable native terminal launch diagnostics. Start with the [setup and composition guide](docs/setup-and-composition.md); original tool actions and their native prerequisites are documented in the [native actions guide](docs/native-tool-actions.md).
 
 - [Using Familiar Hub](docs/familiar-hub.md)
 - [Native tool actions, result connections and verified scope](docs/native-tool-actions.md)
@@ -32,7 +32,7 @@ The catalog contains different kinds of entries: CLI launch connections, install
 
 ## Continuing work without copying every conversation
 
-A logical session links native executions and source references. Supported agents receive shared context through `familiar_context`, `familiar_history` and `familiar_memory`; the native agent decides when to call those tools. **Shared session connected** identifies linked native chats, and **Open Familiar Hub** returns to their common session.
+A logical session links native executions and source references. Supported agents receive shared context through `familiar_context`, `familiar_history`, `familiar_memory` and `familiar_skills`; the native agent decides when to call those tools. **Shared session connected** identifies linked native chats, and **Open Familiar Hub** returns to their common session.
 
 A fork records its parent revision and history boundaries. Original conversations stay on their owning machine, and later parent messages are excluded from the fork's recorded boundary. Missing or rewritten sources produce an error. Source reads still require I/O and access to the owning server.
 

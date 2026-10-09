@@ -120,6 +120,7 @@ export function workspaceTabTargetsEqual(
       left.pluginId === right.pluginId &&
       left.panelId === right.panelId &&
       left.context === right.context &&
+      pluginParamsIdentity(left.params) === pluginParamsIdentity(right.params) &&
       (left.context === "workspace" ||
         (right.context === "agent" && left.agentId === right.agentId))
     );
@@ -223,7 +224,8 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     return target.kind;
   }
   if (target.kind === "plugin") {
-    const identity = `${target.pluginId.length}_${target.pluginId}_${target.panelId.length}_${target.panelId}`;
+    const params = pluginParamsIdentity(target.params);
+    const identity = `${target.pluginId.length}_${target.pluginId}_${target.panelId.length}_${target.panelId}${params ? `_params_${params}` : ""}`;
     return target.context === "workspace"
       ? `plugin_workspace_${identity}`
       : `plugin_agent_${identity}_${target.agentId.length}_${target.agentId}`;
@@ -237,11 +239,19 @@ function normalizePluginTabTarget(
   const pluginId = trimNonEmpty(value.pluginId);
   const panelId = trimNonEmpty(value.panelId);
   if (!pluginId || !panelId) return null;
+  const params = value.params && Object.keys(value.params).length ? { params: value.params } : {};
   if (value.context === "workspace") {
-    return { kind: "plugin", pluginId, panelId, context: "workspace" };
+    return { kind: "plugin", pluginId, panelId, context: "workspace", ...params };
   }
   const agentId = trimNonEmpty(value.agentId);
-  return agentId ? { kind: "plugin", pluginId, panelId, context: "agent", agentId } : null;
+  return agentId
+    ? { kind: "plugin", pluginId, panelId, context: "agent", agentId, ...params }
+    : null;
+}
+
+function pluginParamsIdentity(params?: Record<string, string>): string {
+  const entries = Object.entries(params ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  return entries.length ? JSON.stringify(entries) : "";
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {

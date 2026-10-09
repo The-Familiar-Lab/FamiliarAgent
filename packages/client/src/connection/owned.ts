@@ -91,6 +91,9 @@ export class OwnedSubscriptions {
           overflow = false;
           if (disposed) return;
           this.routes.set(id, registration);
+          // A short-lived stream may finish in the same transport batch. Its
+          // valid snapshot is ready before an exit observer releases the handle.
+          resolve(snapshot);
           for (const observer of observers) deliver(observer);
         })
           .then(() => {

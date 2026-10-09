@@ -20,7 +20,13 @@ vi.mock("@getpaseo/plugin/client", () => ({
     terminals: { create: mocks.terminal },
   }),
 }));
-vi.mock("./ui.js", () => ({ ROW: {}, HubTargetPicker: () => null }));
+vi.mock("./ui.js", () => ({
+  ROW: {},
+  HubTargetPicker: () => null,
+  HubPicker: () => null,
+  HubDisclosure: () => null,
+}));
+vi.mock("./tool-guide.js", () => ({ ToolGuide: () => null }));
 const ui = {
   colors: {},
   button: (label: string, click: () => void, disabled = false) =>
@@ -35,7 +41,10 @@ const hub = {
   cwd: "",
   toolId: "goose",
   models: [],
-  session: { id: "same-A", title: "Current session" },
+  session: { id: "same-A", title: "Current session", endpoints: [] },
+  hosts: [{ serverId: "linux", label: "Ubuntu", status: "online" }],
+  fleet: [],
+  selectedTool: tool,
   setupTarget: { serverId: "linux", toolId: "goose" },
   hostName: () => "Ubuntu",
   setTools: vi.fn(),
@@ -73,7 +82,8 @@ afterEach(() => {
 });
 it("missing session tools are clickable and open setup instead of a disabled no-op", () => {
   render(createElement(HubWorkspace, { hub, ui, props: {} as never }));
-  fireEvent.click(screen.getByText("Goose"));
+  fireEvent.click(screen.getByText("Continue with another tool"));
+  fireEvent.click(screen.getByText("Set up this tool"));
   expect(hub.openSetup).toHaveBeenCalledWith("linux", "goose");
 });
 it("installs on the chosen server without a project folder and retains the logical session", async () => {
@@ -151,4 +161,57 @@ it("cancelled key entry or terminal failure cannot replace saved credentials", a
     false,
   );
   expect(mocks.rpc.mock.calls.some((call) => call[1].name.includes("settings"))).toBe(false);
+});
+
+it("registers skills-only setup with the current resource revision and opens no terminal", async () => {
+  const original = mocks.rpc.getMockImplementation()!;
+  const skills = [{ id: "docker-specialist", path: "/original/skills/docker", enabled: true }];
+  mocks.rpc.mockImplementation(async (host, contract, input) => {
+    if (contract.name === "tools.setup.prepare") return { skills };
+    if (contract.name === "resources.list") return { revision: 7, skills: [], mcp: [] };
+    if (contract.name === "resources.use-skills")
+      return { status: "added", resources: { revision: 8, skills, mcp: [] } };
+    return original(host, contract, input);
+  });
+  render(createElement(ToolSetupDialog, { hub, ui }));
+  await screen.findByText("Install on Ubuntu");
+  fireEvent.click(screen.getByText("Install"));
+  await screen.findByText(/Skills registered on this server/);
+  expect(mocks.rpc).toHaveBeenCalledWith(
+    "linux",
+    expect.objectContaining({ name: "resources.use-skills" }),
+    { expectedRevision: 7, skills },
+  );
+  expect(mocks.terminal).not.toHaveBeenCalled();
+});
+it("offers another server's installation without claiming its account is authenticated", async () => {
+  const available = {
+    ...hub,
+    hosts: [...hub.hosts, { serverId: "mac", status: "online", label: "Mac" }],
+    tools: [...hub.tools, { serverId: "mac", tool: { ...tool, installed: true } }],
+    hostName: (id: string) => (id === "mac" ? "Mac" : "Ubuntu"),
+  } as HubController;
+  render(createElement(ToolSetupDialog, { hub: available, ui }));
+  await screen.findByText("Install on Ubuntu");
+  fireEvent.click(screen.getByText("Use installation on Mac"));
+  expect(hub.openSetup).toHaveBeenCalledWith("mac", "goose");
+  expect(hub.setNotice).toHaveBeenCalledWith(expect.stringContaining("Choose or link"));
+  expect(screen.getByText(/Installation does not confirm sign-in/)).toBeTruthy();
+});
+it("can close a pending status read and ignores its late response", async () => {
+  let complete!: (value: unknown) => void;
+  mocks.rpc.mockImplementation((_host, contract) =>
+    contract.name === "tools.list"
+      ? Promise.resolve([tool])
+      : new Promise((resolve) => {
+          complete = resolve;
+        }),
+  );
+  const view = render(createElement(ToolSetupDialog, { hub, ui }));
+  const close = screen.getByText("Close") as HTMLButtonElement;
+  expect(close.disabled).toBe(false);
+  fireEvent.click(close);
+  expect(hub.setSetupTarget).toHaveBeenCalledWith(null);
+  view.unmount();
+  complete({ installation: "installed", account: "signed-in", details: [], actions: [] });
 });

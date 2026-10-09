@@ -69,6 +69,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       layout,
       navigation,
       workspaceId,
+      params: target.params,
     };
     const Component = contribution.Component;
     Surface = Component;
@@ -82,6 +83,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       navigation,
       workspaceId,
       agentId: target.agentId,
+      params: target.params,
     };
     const Component = contribution.Component;
     Surface = Component;

@@ -289,3 +289,70 @@ describe("logical session composition", () => {
     }
   });
 });
+
+it("session context choices survive old clients, isolate siblings and inherit on fork", () => {
+  const skill: CompositionResource = {
+    id: "skill-remote-review",
+    kind: "skill",
+    format: "path",
+    label: "Review",
+    locator: "review",
+    serverId: "ubuntu",
+    readOnly: true,
+  };
+  const first = store.create({
+    operationId: "select-skills",
+    projectId: "project",
+    title: "A",
+    memory: "Private shared note",
+    resources: [skill],
+  });
+  const sibling = store.create({ operationId: "sibling", projectId: "project", title: "B" });
+  const updated = store.update({
+    operationId: "disable-context",
+    id: first.id,
+    expectedRevision: 1,
+    title: first.title,
+    memory: first.memory,
+    resources: first.resources,
+    memoryEnabled: false,
+    disabledResourceIds: [skill.id],
+  });
+  expect(store.context({ id: first.id })).toMatchObject({ memories: [], resources: [] });
+  expect(store.context({ id: sibling.id }).memories).toEqual([
+    { source: "project", text: "Shared decisions" },
+  ]);
+  const legacy = store.update({
+    operationId: "old-client-memory",
+    id: first.id,
+    expectedRevision: updated.revision,
+    title: first.title,
+    memory: "Still stored",
+    resources: first.resources,
+  });
+  expect(legacy).toMatchObject({
+    memoryEnabled: false,
+    disabledResourceIds: [skill.id],
+    memory: "Still stored",
+  });
+  const fork = store.fork({
+    operationId: "selected-fork",
+    id: first.id,
+    expectedRevision: legacy.revision,
+    title: "Branch",
+  });
+  expect(store.context({ id: fork.id })).toMatchObject({ memories: [], resources: [] });
+  expect(() => store.locateResource(fork.id, skill.id)).toThrow();
+  store.update({
+    operationId: "enable-branch",
+    id: fork.id,
+    expectedRevision: 1,
+    title: fork.title,
+    memory: fork.memory,
+    resources: [],
+    memoryEnabled: true,
+    disabledResourceIds: [],
+  });
+  expect(store.context({ id: fork.id }).resources[0]).toMatchObject(skill);
+  expect(store.context({ id: first.id })).toMatchObject({ memories: [], resources: [] });
+});

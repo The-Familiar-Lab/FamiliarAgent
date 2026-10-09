@@ -2,6 +2,8 @@ import path from "node:path";
 import type { ToolCatalog } from "../tool-catalog/service.js";
 import { ResourceLibrary } from "../tool-catalog/resources.js";
 import { prepareContextShims } from "../tool-catalog/context-shims.js";
+import { gooseAdapterBins, gooseProviderEnvironment } from "../tool-catalog/goose-provider.js";
+import { gooseContextReadEnvironment } from "../tool-catalog/claude-acp-reads.js";
 
 const CHILD_CONTEXT_TOOLS = new Set([
   "goose",
@@ -39,8 +41,12 @@ export function nativeActionContext(root: string, catalog: ToolCatalog) {
       args: goose.args,
       env: {
         ...goose.env,
+        ...(toolId === "goose" ? await gooseProviderEnvironment(root) : {}),
+        ...gooseContextReadEnvironment(goose.args),
         FAMILIAR_SESSION_ID: sessionId,
-        PATH: `${bin}${path.delimiter}${searchPath}`,
+        PATH: [bin, searchPath, ...(toolId === "goose" ? gooseAdapterBins(root) : [])].join(
+          path.delimiter,
+        ),
       },
     };
   };

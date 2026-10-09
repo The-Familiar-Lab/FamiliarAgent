@@ -6493,6 +6493,9 @@ export const TerminalStreamExitSchema = z.object({
   payload: z.object({
     subscriptionId: z.string().optional(),
     terminalId: z.string(),
+    lastOutputLines: z.array(z.string()).max(12).optional(),
+    exitCode: z.number().int().nullable().optional(),
+    signal: z.number().int().nullable().optional(),
     // Observation failure; the underlying terminal process may still be running.
     error: z.string().optional(),
   }),

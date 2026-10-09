@@ -41,11 +41,20 @@ export async function validateBridgeResources(
 ) {
   for (const resource of resources) {
     if (
+      resource.kind === "skill" &&
+      resource.format === "path" &&
+      resource.readOnly &&
+      !resource.boundary
+    ) {
+      await reader(resource, { offset: 0, limit: 1, maxCharacters: 256 });
+      continue;
+    }
+    if (
       resource.kind !== "history" ||
       !["native-timeline", "imported-history", "tool-result"].includes(resource.format ?? "")
     )
       throw new Error(
-        "Only native history, imported history or completed tool result references can be shared through a context connection",
+        "Only native history, imported history, registered skills or completed tool result references can be shared through a context connection",
       );
     if (resource.format !== "tool-result") continue;
     const expected = resource.boundary;
@@ -61,6 +70,26 @@ export async function validateBridgeResources(
     )
       throw new Error("Shared tool result no longer matches its owning source");
   }
+}
+
+async function restorableResources(resources: CompositionResource[], reader: ResourceReader) {
+  const available: CompositionResource[] = [];
+  for (const resource of resources) {
+    if (resource.kind === "skill") {
+      try {
+        await validateBridgeResources([resource], reader);
+      } catch {
+        // Removed registrations must not prevent unrelated history and session restoration.
+        const reference = createHash("sha256").update(resourceKey(resource)).digest("hex");
+        console.warn(
+          `Context bridge restore skipped unavailable skill reference ${reference}; access was not restored`,
+        );
+        continue;
+      }
+    }
+    available.push(resource);
+  }
+  return available;
 }
 
 function sshArguments(target: string, localPort: number) {
@@ -535,6 +564,7 @@ export class CompositionBridges {
         const saved = schema.parse(JSON.parse(raw));
         this.restoring.add(saved.targetServerId);
         try {
+          const resources = await restorableResources(saved.resources, reader);
           // Multiple catalog authorities may be represented on one controller-to-target tunnel.
           const groups = new Map<string | undefined, string[]>();
           for (const route of saved.catalogs) {
@@ -542,12 +572,12 @@ export class CompositionBridges {
             ids.push(route.id);
             groups.set(route.authority, ids);
           }
-          for (let offset = 0; offset < saved.resources.length; offset += 100)
+          for (let offset = 0; offset < resources.length; offset += 100)
             await this.ensure(
               {
                 target: saved.target,
                 targetServerId: saved.targetServerId,
-                resources: saved.resources.slice(offset, offset + 100),
+                resources: resources.slice(offset, offset + 100),
               },
               reader,
               catalog,

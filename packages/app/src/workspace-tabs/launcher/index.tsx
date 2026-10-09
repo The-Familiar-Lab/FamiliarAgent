@@ -1,4 +1,4 @@
-import {
+import React, {
   createContext,
   useCallback,
   useContext,
@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import { Globe, SquarePen, SquareTerminal } from "lucide-react-native";
+import { Globe, Network, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolvePluginIcon } from "@/plugins/icons";
@@ -30,6 +30,16 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import {
+  familiarHubTarget,
+  FAMILIAR_PANEL_ID,
+  FAMILIAR_PLUGIN_ID,
+  resolveFamiliarAgent,
+} from "./internal/familiar-context";
+import { useFamiliarToolCatalog } from "./internal/familiar-tools";
+import type { ToolGuide } from "@getpaseo/protocol/familiar-tools";
+import { familiarToolForTerminalProfile } from "./internal/familiar-profile";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -38,6 +48,8 @@ export type WorkspaceTabLaunchDestination =
   | { kind: "replace"; tabId: string };
 
 export interface NewTabLauncher {
+  workspaceId: string;
+  cwd?: string;
   showChanges: boolean;
   showPullRequest: boolean;
   showBrowser: boolean;
@@ -52,15 +64,17 @@ export interface WorkspaceTabLaunchItem {
   terminalIconKey?: string;
   shortcutActionId?: string;
   disabled: boolean;
+  guide?: ToolGuide;
   panelKind: WorkspaceTabTarget["kind"];
   launch: (destination: WorkspaceTabLaunchDestination) => void;
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "plugin-panels" | "terminal-profiles";
+  id: "tabs" | "plugin-panels" | "terminal-profiles" | "familiar-tools";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
+  notice?: string;
 }
 
 const EMPTY_PANE_PANEL_KINDS: readonly WorkspaceTabTarget["kind"][] = [];
@@ -107,6 +121,13 @@ export function useWorkspaceTabLaunchCatalog(input: {
   invariant(launcher, "NewTabLauncherProvider is required");
   const { config } = useDaemonConfig(serverId);
   const plugins = useInstalledPlugins();
+  const familiar = plugins.find(
+    (plugin) => plugin.serverId === serverId && plugin.id === FAMILIAR_PLUGIN_ID,
+  );
+  const toolCatalog = useFamiliarToolCatalog(familiar);
+  const catalogError = toolCatalog.error
+    ? `Tools could not be loaded: ${toolCatalog.error}`
+    : undefined;
   ensurePanelsRegistered();
 
   const launchSelection = useCallback(
@@ -114,6 +135,33 @@ export function useWorkspaceTabLaunchCatalog(input: {
       launcher.launch(selection, destination);
     },
     [launcher],
+  );
+  const launchFamiliar = useCallback(
+    (toolId?: string) => (destination: WorkspaceTabLaunchDestination) => {
+      const layout =
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[`${serverId}:${launcher.workspaceId}`];
+      const agentId = resolveFamiliarAgent({
+        serverId,
+        layout,
+        ...(destination.kind === "replace"
+          ? { tabId: destination.tabId }
+          : { paneId: destination.paneId }),
+      });
+      launcher.launch(
+        {
+          kind: "target",
+          target: familiarHubTarget({
+            serverId,
+            workspaceId: launcher.workspaceId,
+            cwd: launcher.cwd,
+            agentId,
+            toolId,
+          }),
+        },
+        destination,
+      );
+    },
+    [launcher, serverId],
   );
   const editTerminalProfiles = useCallback(() => {
     router.push(buildSettingsHostSectionRoute(serverId, "terminals") as Href);
@@ -215,7 +263,10 @@ export function useWorkspaceTabLaunchCatalog(input: {
           Icon: resolvePluginIcon(panel.icon),
           disabled: false,
           panelKind: "plugin",
-          launch: launchSelection(selection),
+          launch:
+            plugin.id === FAMILIAR_PLUGIN_ID && panel.id === FAMILIAR_PANEL_ID
+              ? launchFamiliar()
+              : launchSelection(selection),
         });
       }
     }
@@ -224,6 +275,25 @@ export function useWorkspaceTabLaunchCatalog(input: {
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
     if (pluginItems.length > 0) {
       groups.push({ id: "plugin-panels", label: null, items: pluginItems });
+    }
+    if (familiar) {
+      groups.push({
+        id: "familiar-tools",
+        label: "Agent tools",
+        items: toolCatalog.tools.map((tool) => ({
+          id: `familiar-tool:${tool.id}`,
+          label: tool.name,
+          Icon: Network,
+          disabled: false,
+          panelKind: "plugin",
+          guide: tool.guide,
+          launch: launchFamiliar(tool.id),
+        })),
+        notice: catalogError ?? (toolCatalog.loading ? "Loading tools…" : undefined),
+        accessory: toolCatalog.error
+          ? { id: "reload-familiar-tools", label: "Reload tools", run: toolCatalog.reload }
+          : undefined,
+      });
     }
     if (!isExplorerMenu && profiles.length > 0) {
       groups.push({
@@ -235,7 +305,10 @@ export function useWorkspaceTabLaunchCatalog(input: {
           terminalIconKey: getTerminalProfileIcon(profile),
           disabled: launcher.terminalDisabled,
           panelKind: "terminal",
-          launch: launchSelection({ kind: "terminal", profile }),
+          launch:
+            familiar && familiarToolForTerminalProfile(profile)
+              ? launchFamiliar(familiarToolForTerminalProfile(profile))
+              : launchSelection({ kind: "terminal", profile }),
         })),
         accessory: {
           id: "edit-terminal-profiles",
@@ -249,12 +322,16 @@ export function useWorkspaceTabLaunchCatalog(input: {
       const items = group.items.filter((item) =>
         panelCanLaunchInPane(item.panelKind, panePanelKinds),
       );
-      return items.length > 0 ? [{ ...group, items }] : [];
+      return items.length > 0 || group.notice ? [{ ...group, items }] : [];
     });
   }, [
     config?.terminalProfiles,
     editTerminalProfiles,
     launchSelection,
+    launchFamiliar,
+    familiar,
+    toolCatalog,
+    catalogError,
     launcher,
     plugins,
     purpose,

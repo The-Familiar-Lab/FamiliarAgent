@@ -1,6 +1,8 @@
+import { TerminalExitCache } from "./terminal-exit-cache.js";
 import {
   createTerminal,
   type TerminalActivityTransition,
+  type TerminalExitInfo,
   type TerminalSession,
   type TerminalStateSnapshot,
   type TerminalStateSnapshotOptions,
@@ -68,6 +70,7 @@ export interface TerminalManager {
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";
   getTerminal(id: string): TerminalSession | undefined;
+  getTerminalExitInfo?(id: string): TerminalExitInfo | undefined;
   getTerminalState(
     id: string,
     options?: TerminalStateSnapshotOptions,
@@ -104,6 +107,7 @@ function createActivityToken(): string {
 export function createTerminalManager(
   managerOptions: TerminalManagerOptions = {},
 ): TerminalManager {
+  const recentExits = new TerminalExitCache();
   const terminalsByCwd = new Map<string, TerminalSession[]>();
   const terminalsById = new Map<string, TerminalSession>();
   const terminalExitUnsubscribeById = new Map<string, () => void>();
@@ -188,7 +192,8 @@ export function createTerminalManager(
 
   function registerSession(session: TerminalSession): TerminalSession {
     terminalsById.set(session.id, session);
-    const unsubscribeExit = session.onExit(() => {
+    const unsubscribeExit = session.onExit((info) => {
+      recentExits.set(session.id, info);
       removeSessionById(session.id, { kill: false });
     });
     const unsubscribeTitle = session.onTitleChange(() => {
@@ -323,6 +328,7 @@ export function createTerminalManager(
       activityUrl?: string | null;
     }): Promise<TerminalSession> {
       assertAbsolutePath(options.cwd);
+      if (options.id) recentExits.delete(options.id);
 
       const terminals = terminalsByCwd.get(options.cwd) ?? [];
       const defaultName = `Terminal ${terminals.length + 1}`;
@@ -386,6 +392,7 @@ export function createTerminalManager(
       return expected === token ? "valid" : "invalid";
     },
 
+    getTerminalExitInfo: (id: string) => recentExits.get(id),
     getTerminal(id: string): TerminalSession | undefined {
       return terminalsById.get(id);
     },

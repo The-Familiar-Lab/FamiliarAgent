@@ -69,12 +69,12 @@ if (active.has("server"))
     "packages/server/src/server/agent/chat-search/index.test.ts",
     "packages/server/src/server/agent/agent-prompt.test.ts",
     "packages/server/src/server/message-receipts/index.test.ts",
+    "packages/server/src/server/plugins/lifecycle/handlers.test.ts",
     "packages/server/src/server/session/owned-subscriptions/replies.test.ts",
     "packages/server/src/server/session/owned-subscriptions/index.test.ts",
   );
 if (active.has("app"))
   tests.push(
-    "packages/app/src/screens/new-workspace-terminal.test.ts",
     "packages/app/src/screens/new-workspace-fork-context.test.ts",
     "packages/app/src/provider-selection",
     "packages/app/src/runtime/daemon-start-service.test.ts",
@@ -93,7 +93,21 @@ if (active.has("app"))
       "src/plugins/evaluate.test.ts",
       "src/plugins/host-navigation.test.ts",
       "src/plugins/host-navigation.test.tsx",
+      "src/navigation/host-runtime-bootstrap.test.ts",
+      "src/components/directory-browser.test.tsx",
+      "src/add-project-flow/model.test.ts",
+      "src/screens/workspace/project-views.test.ts",
+      "src/screens/workspace/workspace-deck.test.tsx",
+      "src/screens/workspace/workspace-deck-retention.test.ts",
+      "src/screens/new-workspace-terminal.test.ts",
       "src/panels/shared-session-banner.test.tsx",
+      "src/panels/use-agent-detail-lookup.test.tsx",
+      "src/workspace-tabs/launcher/launcher.test.tsx",
+      "src/workspace-tabs/launcher/internal/familiar-context.test.ts",
+      "src/workspace-tabs/launcher/internal/familiar-tools.test.ts",
+      "src/workspace-tabs/launcher/internal/familiar-profile.test.ts",
+      "src/components/familiar-tool-help.test.tsx",
+      "src/terminal/runtime/terminal-stream-controller.test.ts",
       "src/agent-stream/result-selection.test.ts",
       "src/components/connected-result-message.test.tsx",
       "src/composer/actions.test.ts",
@@ -110,7 +124,13 @@ if (active.has("cli"))
   tests.push(
     "packages/cli/src/commands/agent/fork.test.ts",
     "packages/cli/src/commands/context/mcp.test.ts",
+    "packages/client/src/connection/owned.test.ts",
     "packages/client/src/index.test.ts",
+  );
+if (active.has("server"))
+  tests.push(
+    "packages/server/src/terminal/terminal-exit-diagnostics.test.ts",
+    "packages/server/src/terminal/terminal-session-controller.test.ts",
   );
 if (tests.length) add("focused-tests", "vitest", ["run", "--maxWorkers=2", ...tests]);
 if (active.has("discord")) {
@@ -135,7 +155,9 @@ if (options.has("--integration"))
     "--config",
     "packages/server/vitest.config.ts",
     "packages/server/src/server/daemon-e2e/file-download.e2e.test.ts",
+    "packages/server/src/server/daemon-e2e/terminal-launch.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-workspace.e2e.test.ts",
+    "packages/server/src/server/daemon-e2e/familiar-advisor.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-fork.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-composition.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-result-input.e2e.test.ts",

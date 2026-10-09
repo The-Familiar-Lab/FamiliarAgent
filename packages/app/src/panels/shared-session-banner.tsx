@@ -2,7 +2,7 @@ import React, { memo, useCallback } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
-import { createPluginNavigation } from "@/plugins/navigation";
+import { openFamiliarHub } from "@/plugins/familiar-navigation";
 import { useSessionStore } from "@/stores/session-store";
 
 interface SharedSessionBannerProps {
@@ -21,22 +21,26 @@ export const SharedSessionBanner = memo(function SharedSessionBanner({
     const labels = (session?.agents.get(agentId) ?? session?.agentDetails.get(agentId))?.labels;
     return Boolean(labels?.familiarSession?.trim() && labels?.familiarProject?.trim());
   });
+  const exists = useSessionStore((state) => {
+    const session = state.sessions[serverId];
+    return Boolean(session?.agents.has(agentId) || session?.agentDetails.has(agentId));
+  });
   const openHub = useCallback(() => {
-    createPluginNavigation({ serverId, workspaceId }).openSurface("familiar-workspace", "main", {
-      agentId,
-    });
+    openFamiliarHub({ serverId, workspaceId, agentId });
   }, [serverId, workspaceId, agentId]);
 
-  if (!isLinked) return null;
+  if (!exists) return null;
 
   return (
-    <View style={styles.banner} testID="shared-session-banner">
-      <View style={styles.message}>
-        <Text style={styles.title}>Shared session connected</Text>
-        <Text style={styles.description}>
-          Memory and earlier conversations are available to this agent.
-        </Text>
-      </View>
+    <View style={styles.banner} testID={isLinked ? "shared-session-banner" : "familiar-hub-entry"}>
+      {isLinked ? (
+        <View style={styles.message}>
+          <Text style={styles.title}>Shared session connected</Text>
+          <Text style={styles.description}>
+            Memory and earlier conversations are available to this agent.
+          </Text>
+        </View>
+      ) : null}
       <Button size="sm" variant="secondary" onPress={openHub}>
         Open Familiar Hub
       </Button>

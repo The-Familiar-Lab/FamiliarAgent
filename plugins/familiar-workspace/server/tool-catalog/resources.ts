@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { access, lstat, mkdir, readlink, realpath, rm, stat, symlink } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  open,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  symlink,
+} from "node:fs/promises";
 import path from "node:path";
 import { constants } from "node:fs";
 import { z } from "zod";
@@ -8,6 +18,9 @@ import {
   resourceDocument,
   toolId,
   useHttpResource,
+  useSkills,
+  readSkill,
+  changeSkill,
   type ResourceDocument,
 } from "../../shared/tool-catalog.js";
 import { directory, readJson, writeJson } from "./files.js";
@@ -98,6 +111,88 @@ export class ResourceLibrary {
       await writeJson(path.join(this.root, "familiar", "resources.json"), next);
       return { status: "added" as const, resources: next };
     });
+  }
+  async useSkills(input: z.input<typeof useSkills.input>) {
+    const value = useSkills.input.parse(input);
+    return this.mutate(async () => {
+      const current = await this.list();
+      this.assertRevision(current, value.expectedRevision);
+      const nextSkills = [...current.skills];
+      for (const skill of value.skills) {
+        const source = await directory(skill.path);
+        if (!(await stat(path.join(source, "SKILL.md"))).isFile())
+          throw new Error(`Skill ${skill.id} has no SKILL.md file`);
+        const existing = nextSkills.find((item) => item.id === skill.id);
+        if (existing) {
+          if (existing.path !== source || existing.enabled !== skill.enabled)
+            throw new Error(
+              `Skill '${skill.id}' already has different settings. Its mapping was preserved.`,
+            );
+        } else nextSkills.push({ ...skill, path: source });
+      }
+      if (nextSkills.length === current.skills.length)
+        return { status: "unchanged" as const, resources: current };
+      const resources = resourceDocument.parse({
+        ...current,
+        revision: current.revision + 1,
+        skills: nextSkills,
+      });
+      await writeJson(path.join(this.root, "familiar", "resources.json"), resources);
+      return { status: "added" as const, resources };
+    });
+  }
+  async changeSkill(input: z.input<typeof changeSkill.input>) {
+    const value = changeSkill.input.parse(input);
+    return this.mutate(async () => {
+      const current = await this.list();
+      this.assertRevision(current, value.expectedRevision);
+      const existing = current.skills.find((item) => item.id === value.id);
+      if (!existing) throw new Error("The selected skill is no longer registered on this server.");
+      if (value.action !== "remove" && existing.enabled === (value.action === "enable"))
+        return current;
+      const skills =
+        value.action === "remove"
+          ? current.skills.filter((item) => item.id !== value.id)
+          : current.skills.map((item) =>
+              item.id === value.id ? { ...item, enabled: value.action === "enable" } : item,
+            );
+      const next = resourceDocument.parse({ ...current, revision: current.revision + 1, skills });
+      await writeJson(path.join(this.root, "familiar", "resources.json"), next);
+      return next;
+    });
+  }
+  async readSkill(input: z.input<typeof readSkill.input>) {
+    const value = readSkill.input.parse(input);
+    const skill = (await this.list()).skills.find((item) => item.id === value.id);
+    if (!skill) throw new Error("The selected skill is not registered on this server.");
+    const folder = await directory(skill.path);
+    const filePath = await realpath(path.join(folder, "SKILL.md"));
+    if (!filePath.startsWith(`${folder}${path.sep}`))
+      throw new Error("SKILL.md must remain inside its registered skill folder.");
+    const file = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const info = await file.stat();
+      if (!info.isFile()) throw new Error("SKILL.md must be a regular file.");
+      const buffer = Buffer.alloc(value.maxCharacters * 4 + 4);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      const text = buffer.subarray(0, bytesRead).toString("utf8");
+      return {
+        id: skill.id,
+        path: filePath,
+        enabled: skill.enabled,
+        text: text.slice(0, value.maxCharacters),
+        truncated: info.size > bytesRead || text.length > value.maxCharacters,
+      };
+    } finally {
+      await file.close();
+    }
+  }
+  private assertRevision(current: ResourceDocument, expected: number) {
+    if (current.revision !== expected)
+      throw new Error("Shared resources changed. Refresh before applying this change.");
   }
   /** For the existing before(agent.create) hook. Session-specific definitions
    * must take precedence when the caller merges them. Native credentials stay native. */
@@ -194,67 +289,74 @@ export class ResourceLibrary {
   async project(input: z.input<typeof projectResources.input>): Promise<ProjectionResult> {
     const value = projectResources.input.parse(input);
     return this.mutate(async () => {
-      const cwd = await directory(value.cwd);
-      const nativeRoot = path.join(cwd, SKILL_ROOTS[value.toolId]);
-      const key = createHash("sha256").update(`${cwd}\0${value.toolId}`).digest("hex");
-      const manifestPath = path.join(this.root, "familiar", "resource-projections", `${key}.json`);
-      const manifest = manifestSchema.parse(
-        (await readJson(manifestPath)) ?? { version: 1, cwd, toolId: value.toolId, links: {} },
-      );
-      if (manifest.cwd !== cwd || manifest.toolId !== value.toolId)
-        throw new Error("Resource projection does not match the selected project");
-      const result: ProjectionResult = {
-        paths: [],
-        unchanged: [],
-        conflicts: [],
-        removed: [],
-        notes: [
-          "Skills are symbolic links to their authoritative folders; no recursive copying. Original skill contents are never changed.",
-        ],
-      };
-      await this.assertDirectories(cwd, nativeRoot);
-      const wanted = await this.desiredSkills(nativeRoot, value.remove);
-      const remove: Array<{ id: string; file: string }> = [];
-      const add: Array<{ id: string; file: string; source: string }> = [];
-      const managed = { ...manifest.links };
-      for (const [id, sources] of Object.entries(manifest.links)) {
-        const file = path.join(nativeRoot, id);
-        const info = await this.info(file);
-        if (!info) delete managed[id];
-        else if (info.isSymbolicLink() && sources.includes(await this.linkTarget(file))) {
-          if (wanted.get(id) !== (await this.linkTarget(file))) remove.push({ id, file });
-        } else result.conflicts.push(`${file}: changed outside FamiliarAgent; preserved`);
-      }
-      for (const [id, source] of wanted) {
-        const file = path.join(nativeRoot, id);
-        const info = await this.info(file);
-        if (!info) add.push({ id, file, source });
-        else if (info.isSymbolicLink() && (await this.linkTarget(file)) === source)
-          result.unchanged.push(file);
-        else if (remove.some((item) => item.id === id)) add.push({ id, file, source });
-        else result.conflicts.push(`${file}: already exists; preserved`);
-      }
-      if (result.conflicts.length) return result;
-      // Persist intent first so interrupted linking can be retried and reversed.
-      const intended = { ...managed };
-      for (const item of add)
-        intended[item.id] = [...new Set([...(intended[item.id] ?? []), item.source])];
-      await writeJson(manifestPath, { ...manifest, links: intended });
-      for (const item of remove) {
-        await rm(item.file);
-        result.removed.push(item.file);
-      }
-      if (add.length) await mkdir(nativeRoot, { recursive: true });
-      for (const item of add) {
-        await symlink(item.source, item.file, "dir");
-        result.paths.push(item.file);
-      }
-      const settled = Object.fromEntries(
-        Object.keys(intended).flatMap((id) => (wanted.has(id) ? [[id, [wanted.get(id)!]]] : [])),
-      );
-      await writeJson(manifestPath, { ...manifest, links: settled });
-      return result;
+      if (value.expectedRevision !== undefined)
+        this.assertRevision(await this.list(), value.expectedRevision);
+      return this.projectSkills(value);
     });
+  }
+  private async projectSkills(
+    value: z.output<typeof projectResources.input>,
+  ): Promise<ProjectionResult> {
+    const cwd = await directory(value.cwd);
+    const nativeRoot = path.join(cwd, SKILL_ROOTS[value.toolId]);
+    const key = createHash("sha256").update(`${cwd}\0${value.toolId}`).digest("hex");
+    const manifestPath = path.join(this.root, "familiar", "resource-projections", `${key}.json`);
+    const manifest = manifestSchema.parse(
+      (await readJson(manifestPath)) ?? { version: 1, cwd, toolId: value.toolId, links: {} },
+    );
+    if (manifest.cwd !== cwd || manifest.toolId !== value.toolId)
+      throw new Error("Resource projection does not match the selected project");
+    const result: ProjectionResult = {
+      paths: [],
+      unchanged: [],
+      conflicts: [],
+      removed: [],
+      notes: [
+        "Skills are symbolic links to their authoritative folders; no recursive copying. Original skill contents are never changed.",
+      ],
+    };
+    await this.assertDirectories(cwd, nativeRoot);
+    const wanted = await this.desiredSkills(nativeRoot, value.remove);
+    const remove: Array<{ id: string; file: string }> = [];
+    const add: Array<{ id: string; file: string; source: string }> = [];
+    const managed = { ...manifest.links };
+    for (const [id, sources] of Object.entries(manifest.links)) {
+      const file = path.join(nativeRoot, id);
+      const info = await this.info(file);
+      if (!info) delete managed[id];
+      else if (info.isSymbolicLink() && sources.includes(await this.linkTarget(file))) {
+        if (wanted.get(id) !== (await this.linkTarget(file))) remove.push({ id, file });
+      } else result.conflicts.push(`${file}: changed outside FamiliarAgent; preserved`);
+    }
+    for (const [id, source] of wanted) {
+      const file = path.join(nativeRoot, id);
+      const info = await this.info(file);
+      if (!info) add.push({ id, file, source });
+      else if (info.isSymbolicLink() && (await this.linkTarget(file)) === source)
+        result.unchanged.push(file);
+      else if (remove.some((item) => item.id === id)) add.push({ id, file, source });
+      else result.conflicts.push(`${file}: already exists; preserved`);
+    }
+    if (result.conflicts.length) return result;
+    // Persist intent first so interrupted linking can be retried and reversed.
+    const intended = { ...managed };
+    for (const item of add)
+      intended[item.id] = [...new Set([...(intended[item.id] ?? []), item.source])];
+    await writeJson(manifestPath, { ...manifest, links: intended });
+    for (const item of remove) {
+      await rm(item.file);
+      result.removed.push(item.file);
+    }
+    if (add.length) await mkdir(nativeRoot, { recursive: true });
+    for (const item of add) {
+      await symlink(item.source, item.file, "dir");
+      result.paths.push(item.file);
+    }
+    const settled = Object.fromEntries(
+      Object.keys(intended).flatMap((id) => (wanted.has(id) ? [[id, [wanted.get(id)!]]] : [])),
+    );
+    await writeJson(manifestPath, { ...manifest, links: settled });
+    return result;
   }
   private async desiredSkills(nativeRoot: string, remove: boolean): Promise<Map<string, string>> {
     const desired = remove ? [] : (await this.list()).skills.filter((skill) => skill.enabled);

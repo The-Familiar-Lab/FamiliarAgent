@@ -5,6 +5,7 @@ import {
   type CompositionResource,
   type HistoryBoundary,
 } from "../../shared/composition.js";
+import type { ResourceLibrary } from "../tool-catalog/resources.js";
 import type { HistoryStore } from "../history/store.js";
 import { forwardWorkspace } from "../authority.js";
 import type { ResourceReader } from "./store.js";
@@ -28,12 +29,27 @@ export function localResourceReader(options: {
   history: Pick<HistoryStore, "readPage">;
   paseo: PaseoApi;
   toolReader?: ResourceReader;
+  skills?: Pick<ResourceLibrary, "readSkill">;
 }): ResourceReader {
   return async (resource, input) => {
     if (resource.serverId !== options.serverId)
       throw new Error(
         `Source belongs to server ${resource.serverId}; select its connected host or configure an SSH connection for this reference`,
       );
+    if (resource.kind === "skill") {
+      if (resource.format !== "path" || !resource.readOnly || resource.boundary || input.selection)
+        throw new Error("Skills require a read-only registered ID reference.");
+      if (!options.skills) throw new Error("The source skill registry is unavailable.");
+      const skill = await options.skills.readSkill({
+        id: resource.locator,
+        maxCharacters: input.maxCharacters,
+      });
+      return {
+        messages: input.offset === 0 ? [{ role: "skill", text: skill.text }] : [],
+        nextOffset: null,
+        truncated: input.offset === 0 && skill.truncated,
+      };
+    }
     if (resource.kind !== "history")
       throw new Error(
         "This reference is opened with its native file, skill, MCP or tool surface; it is not a conversation history",

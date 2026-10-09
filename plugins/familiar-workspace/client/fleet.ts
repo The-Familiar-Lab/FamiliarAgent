@@ -1,3 +1,4 @@
+import { readWithDeadline } from "./read-deadline.js";
 import { invokeHostRpc, getPaseoClient, type PluginHostSummary } from "@getpaseo/plugin/client";
 import type { PluginRpcContract } from "@getpaseo/plugin";
 import type { ZodType, input, output } from "zod";
@@ -27,37 +28,47 @@ export interface FleetSnapshot {
   error?: string;
   hasMore: boolean;
 }
-export async function readFleet(hosts: readonly PluginHostSummary[]): Promise<FleetSnapshot[]> {
+export async function readFleet(
+  hosts: readonly PluginHostSummary[],
+  onHost?: (value: FleetSnapshot) => void,
+): Promise<FleetSnapshot[]> {
   return Promise.all(
-    hosts.map(async (server) => {
+    hosts.map(async (server): Promise<FleetSnapshot> => {
+      const publish = (snapshot: FleetSnapshot) => {
+        onHost?.(snapshot);
+        return snapshot;
+      };
       if (server.status !== "online")
-        return {
+        return publish({
           server,
           agents: [],
           workspaces: [],
           hasMore: false,
           error: "Disconnected",
-        };
+        });
       try {
         const client = getPaseoClient(server.serverId);
-        const [agents, workspaces] = await Promise.all([
-          client.agents.list({ page: { limit: 100 } }),
-          client.workspaces.list({ page: { limit: 100 } }),
-        ]);
-        return {
+        const [agents, workspaces] = await readWithDeadline(
+          Promise.all([
+            client.agents.list({ page: { limit: 100 } }),
+            client.workspaces.list({ page: { limit: 100 } }),
+          ]),
+          `${server.label} sessions`,
+        );
+        return publish({
           server,
           agents: agents.entries.map((entry) => entry.agent),
           workspaces: workspaces.entries,
           hasMore: agents.pageInfo.hasMore || workspaces.pageInfo.hasMore,
-        };
+        });
       } catch (error) {
-        return {
+        return publish({
           server,
           agents: [],
           workspaces: [],
           hasMore: false,
           error: error instanceof Error ? error.message : String(error),
-        };
+        });
       }
     }),
   );
@@ -123,7 +134,8 @@ export async function connectContextSources(
       !sshCoordinates(item.connection) &&
       ((owner && owner.serverId !== item.serverId) ||
         context.resources.some(
-          (resource) => resource.kind === "history" && resource.serverId !== item.serverId,
+          (resource) =>
+            ["history", "skill"].includes(resource.kind) && resource.serverId !== item.serverId,
         )),
   );
   const destinations = candidates.filter((item) => sshCoordinates(item.connection));
@@ -139,7 +151,9 @@ export async function connectContextSources(
         sessions: [session.id],
         catalogAuthority: catalogAuthority || undefined,
         resources: context.resources
-          .filter((item) => item.kind === "history" && item.serverId !== target.serverId)
+          .filter(
+            (item) => ["history", "skill"].includes(item.kind) && item.serverId !== target.serverId,
+          )
           .map(({ inheritedFrom: _inheritedFrom, ...resource }) => resource),
       }),
     ),

@@ -223,6 +223,21 @@ describe("terminal-stream-controller", () => {
     });
   });
 
+  it("shows a fast process exit code and its setup diagnostic", async () => {
+    const harness = createHarness();
+    harness.client.nextSubscribeResults.push({ terminalId: "term-1", error: null });
+    harness.controller.setTerminal({ terminalId: "term-1" });
+    await flushAsyncWork();
+    harness.controller.handleTerminalExit({
+      terminalId: "term-1",
+      exitCode: 127,
+      lastOutputLines: ["Native tool is missing. Open setup."],
+    });
+    expect(harness.statuses.at(-1)?.error).toBe(
+      "Terminal exited (exit code 127)\nNative tool is missing. Open setup.",
+    );
+  });
+
   it("requests configured restore options and forwards restore output", async () => {
     const client = new FakeTerminalStreamClient();
     const harness = createHarness({ client });

@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Server } from "node:http";
 import type { CompositionResource } from "../../shared/composition.js";
-import { BridgeRegistry, startReadOnlyBridge, validateBridgeResources } from "./bridge.js";
+import {
+  BridgeRegistry,
+  CompositionBridges,
+  startReadOnlyBridge,
+  validateBridgeResources,
+} from "./bridge.js";
 import { ToolRunStore } from "../tool-actions/store.js";
 import { captureToolResult, toolResultReader } from "../tool-actions/results.js";
 
@@ -23,6 +28,7 @@ const resource: CompositionResource = {
 };
 const resourceKey = `${resource.serverId}\0${resource.format}\0${resource.locator}`;
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const server of servers.splice(0)) {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -258,3 +264,91 @@ describe("scoped history return path", () => {
     await expect(reader({ ...linked, locator: "unrelated-agent" }, page)).rejects.toThrow();
   });
 });
+
+it("validates registered skill references before opening cross-server access", async () => {
+  const skill: CompositionResource = {
+    ...resource,
+    kind: "skill",
+    format: "path",
+    locator: "review",
+  };
+  const reader = vi
+    .fn()
+    .mockResolvedValue({ messages: [{ role: "skill", text: "Read me" }], nextOffset: null });
+  await validateBridgeResources([skill], reader);
+  expect(reader).toHaveBeenCalledWith(skill, { offset: 0, limit: 1, maxCharacters: 256 });
+  reader.mockRejectedValueOnce(new Error("The selected skill is not registered"));
+  await expect(validateBridgeResources([skill], reader)).rejects.toThrow("not registered");
+  await expect(validateBridgeResources([{ ...skill, readOnly: false }], reader)).rejects.toThrow(
+    "Only native history",
+  );
+});
+
+it.each(["not registered", "access denied"])(
+  "restores unrelated history and sessions when a saved skill is %s",
+  async (reason) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "familiar-bridge-restore-"));
+    directories.push(directory);
+    const missing: CompositionResource = {
+      ...resource,
+      id: "removed-skill",
+      kind: "skill",
+      format: "path",
+      locator: "private-skill-location",
+    };
+    const available = { ...missing, id: "registered-skill", locator: "registered" };
+    const target = "ssh://test-host";
+    await writeFile(
+      path.join(directory, `${"a".repeat(64)}.json`),
+      JSON.stringify({
+        target,
+        targetServerId: "ubuntu",
+        resources: [missing, resource, available],
+        catalogs: [{ id: "logical-session", authority: "ssh://catalog-host" }],
+      }),
+    );
+    const reader = vi.fn(async (reference: CompositionResource) => {
+      if (reference.id === missing.id) throw new Error(`${reason}: private-skill-location`);
+      return { messages: [{ role: "skill", text: "registered skill" }], nextOffset: null };
+    });
+    const bridges = new CompositionBridges({ serverId: "mac", leasesDirectory: directory });
+    const ensure = vi.spyOn(bridges, "ensure").mockImplementation(async (input) => {
+      await validateBridgeResources(input.resources ?? [], reader);
+      return {
+        sourceServerId: "mac",
+        targetServerId: "ubuntu",
+        active: true,
+        sharedReferences: input.resources?.length ?? 0,
+        linkedSessions: input.sessions?.length ?? 0,
+      };
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const catalog = vi.fn();
+    await expect(bridges.restore(reader, catalog)).resolves.toEqual({ restored: 1, failed: 0 });
+    expect(ensure).toHaveBeenCalledTimes(2);
+    expect(ensure).toHaveBeenNthCalledWith(
+      1,
+      { target, targetServerId: "ubuntu", resources: [resource, available] },
+      reader,
+      catalog,
+    );
+    expect(ensure).toHaveBeenNthCalledWith(
+      2,
+      {
+        target,
+        targetServerId: "ubuntu",
+        sessions: ["logical-session"],
+        catalogAuthority: "ssh://catalog-host",
+      },
+      reader,
+      catalog,
+    );
+    expect(reader).toHaveBeenCalledWith(missing, { offset: 0, limit: 1, maxCharacters: 256 });
+    expect(warning).toHaveBeenCalledOnce();
+    expect(warning.mock.calls[0][0]).toMatch(/skipped unavailable skill reference [a-f0-9]{64}/u);
+    expect(warning.mock.calls[0][0]).not.toContain(missing.locator);
+    // Explicit new access still fails; restoring other entries never widens skill permissions.
+    await expect(validateBridgeResources([missing], reader)).rejects.toThrow(reason);
+    bridges.close();
+  },
+);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
 
 import { listToolRuns, type ToolRunSummary } from "../../shared/tool-actions.js";
@@ -6,7 +6,8 @@ import { ToolRunCard } from "./tool-run-card.js";
 import { useToolActionForm } from "./tool-action-form.js";
 import { hostRpc } from "../fleet.js";
 
-import { HubTargetPicker, ROW, type HubUi } from "./ui.js";
+import { ToolGuide } from "./tool-guide.js";
+import { HubPicker, HubTargetPicker, ROW, type HubUi } from "./ui.js";
 import type { HubController } from "./controller.js";
 import type { ResultFlow } from "./result-flow.js";
 
@@ -76,6 +77,31 @@ export function NativeToolActions({
   }, []);
   const form = useToolActionForm(hub, flow, asInput, refreshed);
   const { definitions, toolId, actionId, actions, selectTool, selectAction } = form;
+  const toolOptions = useMemo(
+    () =>
+      definitions
+        .filter(
+          (definition) =>
+            !asInput ||
+            definition.actions.some((entry) => entry.input && entry.inputMode === "prompt"),
+        )
+        .map((definition) => ({
+          id: definition.toolId,
+          label:
+            hub.tools.find(
+              (item) => item.serverId === hub.target && item.tool.id === definition.toolId,
+            )?.tool.name ?? definition.toolId,
+        })),
+    [definitions, asInput, hub.tools, hub.target],
+  );
+  const actionOptions = useMemo(
+    () =>
+      actions.map((definition) => ({
+        id: definition.id,
+        label: definition.label,
+      })),
+    [actions],
+  );
   return (
     <View style={ui.card}>
       <Text style={ui.sectionHeading}>
@@ -87,39 +113,23 @@ export function NativeToolActions({
       </Text>
       <HubTargetPicker hub={hub} ui={ui} />
       {ui.field("Project folder on this server", hub.cwd, hub.setCwd)}
-      <View style={ROW}>
-        {definitions
-          .filter(
-            (definition) =>
-              !asInput ||
-              definition.actions.some((entry) => entry.input && entry.inputMode === "prompt"),
-          )
-          .map((definition) => (
-            <View key={definition.toolId}>
-              {ui.button(
-                definition.toolId,
-                () => {
-                  selectTool(definition.toolId);
-                  hub.openSetup(hub.target, definition.toolId);
-                },
-                false,
-                toolId === definition.toolId,
-              )}
-            </View>
-          ))}
-      </View>
-      <View style={ROW}>
-        {actions.map((definition) => (
-          <View key={definition.id}>
-            {ui.button(
-              definition.label,
-              () => selectAction(definition.id),
-              false,
-              actionId === definition.id,
-            )}
-          </View>
-        ))}
-      </View>
+      <HubPicker label="Tool" value={toolId} options={toolOptions} onChange={selectTool} ui={ui} />
+      {hub.tools.find((item) => item.serverId === hub.target && item.tool.id === toolId)?.tool ? (
+        <ToolGuide
+          tool={
+            hub.tools.find((item) => item.serverId === hub.target && item.tool.id === toolId)!.tool
+          }
+          ui={ui}
+        />
+      ) : null}
+      {ui.button("Tool settings / Sign in", () => hub.openSetup(hub.target, toolId), !toolId)}
+      <HubPicker
+        label="Action"
+        value={actionId}
+        options={actionOptions}
+        onChange={selectAction}
+        ui={ui}
+      />
       <ToolActionFields
         hub={hub}
         ui={ui}

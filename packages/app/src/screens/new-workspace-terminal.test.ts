@@ -12,6 +12,96 @@ function createRecordingNavigate() {
 }
 
 describe("runCreateTerminalWorkspace", () => {
+  it("prepares a provider command in the actual created worktree before spawning and retains its environment arguments", async () => {
+    const ensureWorkspace = vi
+      .fn()
+      .mockResolvedValue({ id: "actual", workspaceDirectory: "/actual/worktree" });
+    const prepareProfileLaunch = vi.fn().mockResolvedValue({
+      command: "/usr/bin/env",
+      args: [
+        "PATH=/managed/bin",
+        "/Applications/Codex.app/Contents/Resources/codex",
+        "--",
+        "exact prompt",
+      ],
+    });
+    const createTerminal = vi.fn().mockResolvedValue({ terminalId: "term" });
+    await runCreateTerminalWorkspace({
+      cwd: "/original",
+      prompt: "exact prompt",
+      profile: { command: "codex", args: ["{{{prompt}}}"] },
+      profileName: "Codex",
+      ensureWorkspace,
+      prepareProfileLaunch,
+      createTerminal,
+      sendTerminalInput: vi.fn(),
+      serverId: "mac",
+      navigate: vi.fn(),
+    });
+    expect(prepareProfileLaunch).toHaveBeenCalledExactlyOnceWith("/actual/worktree");
+    expect(createTerminal).toHaveBeenCalledWith({
+      workspaceDirectory: "/actual/worktree",
+      workspaceId: "actual",
+      name: "Codex",
+      command: "/usr/bin/env",
+      args: [
+        "PATH=/managed/bin",
+        "/Applications/Codex.app/Contents/Resources/codex",
+        "--",
+        "exact prompt",
+      ],
+    });
+  });
+  it.each(["goose", "openrig", "aider", "claude-squad"])(
+    "opens %s setup in the actual new workspace without blindly executing a missing command",
+    async (toolId) => {
+      const ensureWorkspace = vi
+        .fn()
+        .mockResolvedValue({ id: "actual-worktree", workspaceDirectory: "/native/worktree" });
+      const createTerminal = vi.fn();
+      const sendTerminalInput = vi.fn();
+      const { navigate, recorded } = createRecordingNavigate();
+      await runCreateTerminalWorkspace({
+        cwd: "/selected/repo",
+        prompt: "old hidden draft",
+        profile: { command: toolId },
+        profileName: toolId,
+        familiarToolId: toolId,
+        ensureWorkspace,
+        createTerminal,
+        sendTerminalInput,
+        serverId: "linux",
+        navigate,
+      });
+      expect(ensureWorkspace).toHaveBeenCalledWith({
+        cwd: "/selected/repo",
+        prompt: "",
+        attachments: [],
+        withInitialAgent: false,
+      });
+      expect(createTerminal).not.toHaveBeenCalled();
+      expect(sendTerminalInput).not.toHaveBeenCalled();
+      expect(recorded).toEqual([
+        {
+          serverId: "linux",
+          workspaceId: "actual-worktree",
+          target: {
+            kind: "plugin",
+            pluginId: "familiar-workspace",
+            panelId: "shared",
+            context: "workspace",
+            params: {
+              serverId: "linux",
+              workspaceId: "actual-worktree",
+              cwd: "/native/worktree",
+              toolId,
+              setup: "1",
+            },
+          },
+        },
+      ]);
+    },
+  );
   it("creates the workspace without a chat agent, substitutes the prompt into the profile, and navigates to the terminal tab", async () => {
     const workspace = { id: "workspace-123", workspaceDirectory: "/repo/workspace-123" };
     const ensureWorkspace = vi.fn().mockResolvedValue(workspace);

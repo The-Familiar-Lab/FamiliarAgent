@@ -124,6 +124,8 @@ export const compositionSession = z
     updatedAt: z.string(),
     memory: z.string().max(64 * 1024),
     resources,
+    memoryEnabled: z.boolean().optional(),
+    disabledResourceIds: z.array(id).max(100).optional(),
     endpoints: z.array(compositionEndpoint).max(100),
     activeEndpointId: id.nullable(),
     parent: z
@@ -219,6 +221,8 @@ export const updateComposition = defineRpc({
       title: z.string().trim().min(1).max(200),
       memory: z.string().max(64 * 1024),
       resources,
+      memoryEnabled: z.boolean().optional(),
+      disabledResourceIds: z.array(id).max(100).optional(),
     })
     .strict(),
   output: compositionSession,
@@ -380,7 +384,7 @@ export const installCompositionBridge = defineRpc({
 });
 export const compositionRuntime = defineRpc({
   name: "composition.runtime",
-  input: z.object({ sessionId: id }).strict(),
+  input: z.object({ sessionId: id, readOnly: z.boolean().optional() }).strict(),
   output: z.object({
     mcpServers: z.object({
       familiar_context: z.object({

@@ -47,6 +47,10 @@ import { LaunchControl } from "@/new-workspace-launch/launch-control";
 import { forkLaunchTarget } from "./new-workspace-fork-context";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
+import {
+  familiarToolForTerminalProfile,
+  prepareTerminalProfileLaunch,
+} from "@/workspace-tabs/launcher/internal/familiar-profile";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
 import {
   useHostRuntimeClient,
@@ -2207,6 +2211,16 @@ export function NewWorkspaceScreen({
         prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
+        familiarToolId: familiarToolForTerminalProfile(selectedTerminalProfile),
+        prepareProfileLaunch: selectedTerminalProfile
+          ? (cwd) =>
+              prepareTerminalProfileLaunch(
+                withConnectedClient(),
+                cwd,
+                selectedTerminalProfile,
+                terminalPromptText,
+              )
+          : undefined,
         ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
         createTerminal: async (input) => {
           const connectedClient = withConnectedClient();

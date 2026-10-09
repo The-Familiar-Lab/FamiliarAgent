@@ -75,6 +75,8 @@ export async function loadToolResultDraft(
       operationId: operationId(),
       title: session.title,
       memory: session.memory,
+      memoryEnabled: session.memoryEnabled,
+      disabledResourceIds: session.disabledResourceIds,
       resources: [
         ...session.resources,
         { ...capture.anchor.resource, connection: linked.endpoint.connection },

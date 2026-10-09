@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 import { Pencil, Plus } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
+import { FamiliarToolHelp } from "@/components/familiar-tool-help";
+import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { isWeb } from "@/constants/platform";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -94,25 +96,28 @@ function LauncherRow({ item }: { item: WorkspaceTabLaunchItem }) {
   }, [item, tabId]);
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={item.label}
-      dataSet={ROW_DATA_SET}
-      disabled={item.disabled}
-      onPress={handlePress}
-      style={rowStyle}
-      tabIndex={-1}
-      testID={`workspace-new-tab-${item.id}`}
-    >
-      {item.Icon ? <ThemedLauncherIcon Icon={item.Icon} uniProps={mutedColorMapping} /> : null}
-      {item.terminalIconKey ? (
-        <TerminalProfileIcon iconKey={item.terminalIconKey} size={LAUNCHER_ICON_SIZE} />
-      ) : null}
-      <Text numberOfLines={1} style={styles.rowLabel}>
-        {item.label}
-      </Text>
-      {item.shortcutActionId ? <LauncherShortcut actionId={item.shortcutActionId} /> : null}
-    </Pressable>
+    <View style={styles.launcherRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+        dataSet={ROW_DATA_SET}
+        disabled={item.disabled}
+        onPress={handlePress}
+        style={rowStyle}
+        tabIndex={-1}
+        testID={`workspace-new-tab-${item.id}`}
+      >
+        {item.Icon ? <ThemedLauncherIcon Icon={item.Icon} uniProps={mutedColorMapping} /> : null}
+        {item.terminalIconKey ? (
+          <TerminalProfileIcon iconKey={item.terminalIconKey} size={LAUNCHER_ICON_SIZE} />
+        ) : null}
+        <Text numberOfLines={1} style={styles.rowLabel}>
+          {item.label}
+        </Text>
+        {item.shortcutActionId ? <LauncherShortcut actionId={item.shortcutActionId} /> : null}
+      </Pressable>
+      {item.guide ? <FamiliarToolHelp name={item.label} guide={item.guide} /> : null}
+    </View>
   );
 }
 
@@ -251,17 +256,27 @@ const NewTabPanel = memo(function NewTabPanel(): ReactElement {
               {group.label ? (
                 <View style={styles.groupHeader}>
                   <Text style={styles.groupLabel}>{group.label}</Text>
-                  {group.accessory ? (
+                  {group.accessory && group.id === "terminal-profiles" ? (
                     <EditProfilesButton
                       label={group.accessory.label}
                       onPress={group.accessory.run}
                     />
+                  ) : null}
+                  {group.accessory && group.id !== "terminal-profiles" ? (
+                    <Button size="sm" variant="secondary" onPress={group.accessory.run}>
+                      {group.accessory.label}
+                    </Button>
                   ) : null}
                 </View>
               ) : null}
               {group.items.map((item) => (
                 <LauncherRow key={item.id} item={item} />
               ))}
+              {group.notice ? (
+                <Text accessibilityLiveRegion="polite" style={styles.groupLabel}>
+                  {group.notice}
+                </Text>
+              ) : null}
             </View>
           ))}
         </View>
@@ -294,6 +309,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   row: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -306,6 +322,7 @@ const styles = StyleSheet.create((theme) => ({
     outlineColor: "transparent",
     backgroundColor: theme.colors.surface1,
   },
+  launcherRow: { flexDirection: "row", alignItems: "center" },
   rowHovered: { backgroundColor: theme.colors.surface2 },
   rowFocused: { borderColor: theme.colors.borderAccent },
   rowPressed: { opacity: 0.85 },

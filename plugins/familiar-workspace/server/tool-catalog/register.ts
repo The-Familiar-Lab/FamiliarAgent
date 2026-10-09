@@ -11,13 +11,17 @@ import {
   saveResources,
   useHttpResource,
   projectResources,
+  useSkills,
+  readSkill,
+  changeSkill,
   type ToolPlan,
 } from "../../shared/tool-catalog.js";
 import { ResourceLibrary } from "./resources.js";
 import { ToolCatalog } from "./service.js";
 import { prepareContextShims } from "./context-shims.js";
 import { ToolSetup } from "./setup.js";
-import { prepareToolSetup, readToolSetup } from "../../shared/tool-setup.js";
+import { prepareToolSetup, readToolSetup, readSetupWorkspace } from "../../shared/tool-setup.js";
+import { gooseContextReadEnvironment } from "./claude-acp-reads.js";
 
 /** Uses existing terminal, browser and native provider paths. The registrar
  * prepares processes; it never runs installation or agent loops in the daemon. */
@@ -25,6 +29,7 @@ export function registerToolCatalog(server: PluginServerContext, root: string): 
   const tools = new ToolCatalog(root);
   const resources = new ResourceLibrary(root);
   const setup = new ToolSetup(root, tools);
+  server.handle(readSetupWorkspace, () => setup.workspace());
   server.handle(readToolSetup, ({ id }) => setup.status(id));
   server.handle(prepareToolSetup, (input) => setup.prepare(input));
   server.handle(listTools, () => tools.list());
@@ -34,6 +39,9 @@ export function registerToolCatalog(server: PluginServerContext, root: string): 
   server.handle(listResources, () => resources.list());
   server.handle(saveResources, (input) => resources.save(input));
   server.handle(useHttpResource, (input) => resources.useHttp(input));
+  server.handle(useSkills, (input) => resources.useSkills(input));
+  server.handle(readSkill, (input) => resources.readSkill(input));
+  server.handle(changeSkill, (input) => resources.changeSkill(input));
   server.handle(projectResources, (input) => resources.project(input));
   server.handle(prepareTool, async (input) => {
     const plan = await tools.prepare(input);
@@ -67,6 +75,7 @@ export function registerToolCatalog(server: PluginServerContext, root: string): 
     return plan;
   });
   server.before("agent.create", async ({ request }) => {
+    if (request.labels?.familiarAdvisor === "true") return request;
     const provider = request.config.provider;
     if (provider !== "claude" && provider !== "codex") return request;
     const shared = await resources.runtimeMcpServers(provider);
@@ -152,6 +161,7 @@ async function prepareGooseContext(
       );
   }
   const goose = await resources.gooseLaunch(sessionId);
+  Object.assign(goose.env, gooseContextReadEnvironment(goose.args));
   const separator = plan.args.indexOf("--", commandIndex + 1);
   plan.args.splice(separator < 0 ? plan.args.length : separator, 0, ...goose.args);
   plan.args.splice(

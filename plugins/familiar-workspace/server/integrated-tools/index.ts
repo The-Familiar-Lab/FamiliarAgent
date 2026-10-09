@@ -5,6 +5,8 @@ import { codeyAdapter } from "./codey.js";
 import { hydraAdapter } from "./hydra.js";
 import { openHarnessAdapter } from "./openharness.js";
 import { orcaAdapter } from "./orca.js";
+import { pullboardAdapter } from "./pullboard.js";
+import { dockerSkillsAdapter } from "./docker-skills.js";
 export {
   readIntegratedSetup,
   prepareIntegratedSetup,
@@ -20,4 +22,6 @@ export const INTEGRATED_TOOL_ADAPTERS = [
   codeyAdapter,
   openHarnessAdapter,
   agentsAdapter,
+  pullboardAdapter,
+  dockerSkillsAdapter,
 ];

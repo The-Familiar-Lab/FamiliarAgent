@@ -1,3 +1,4 @@
+import { describeTerminalExit } from "./terminal-exit-cache.js";
 import type pino from "pino";
 import type {
   OwnedSubscription,
@@ -35,7 +36,7 @@ import {
   resolveTerminalSubscriptionSnapshotMode,
   type TerminalRestoreOptions,
 } from "./terminal-restore.js";
-import type { TerminalSession } from "./terminal.js";
+import type { TerminalSession, TerminalExitInfo } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
@@ -63,6 +64,7 @@ interface ActiveTerminalStream {
   snapshotTask?: Promise<void>;
   snapshotOutput?: Buffer;
   exiting: boolean;
+  exitInfo?: TerminalExitInfo;
   unsubscribe: () => void;
   needsSnapshot: boolean;
   snapshotInFlight: boolean;
@@ -677,11 +679,12 @@ export class TerminalSessionController {
 
     const session = this.terminalManager.getTerminal(msg.terminalId);
     if (!session) {
+      const exitInfo = this.terminalManager.getTerminalExitInfo?.(msg.terminalId);
       this.emit({
         type: "subscribe_terminal_response",
         payload: {
           terminalId: msg.terminalId,
-          error: "Terminal not found",
+          error: exitInfo ? describeTerminalExit(exitInfo) : "Terminal not found",
           requestId: msg.requestId,
         },
       });
@@ -953,9 +956,10 @@ export class TerminalSessionController {
       },
       { initialSnapshot: resolveTerminalSubscriptionSnapshotMode(options?.restore) },
     );
-    const unsubscribeExit = terminal.onExit(() =>
-      this.detachStream(terminal.id, { emitExit: true }),
-    );
+    const unsubscribeExit = terminal.onExit((info) => {
+      activeStream.exitInfo = info;
+      this.detachStream(terminal.id, { emitExit: true });
+    });
     activeStream.unsubscribe = () => {
       unsubscribeOutput();
       unsubscribeExit();
@@ -1170,7 +1174,19 @@ export class TerminalSessionController {
     }
     // Completion must not turn this final flush into another backpressure read.
     stream.outputCoalescer.flush();
-    stream.owner.emit({ type: "terminal_stream_exit", payload: { terminalId: stream.terminalId } });
+    stream.owner.emit({
+      type: "terminal_stream_exit",
+      payload: {
+        terminalId: stream.terminalId,
+        ...(stream.exitInfo
+          ? {
+              exitCode: stream.exitInfo.exitCode,
+              signal: stream.exitInfo.signal,
+              lastOutputLines: stream.exitInfo.lastOutputLines,
+            }
+          : {}),
+      },
+    });
     await stream.owner.release();
   }
 

@@ -2,31 +2,43 @@ import { Text, View } from "react-native";
 import { ROW, type HubUi } from "./ui.js";
 import type { HubController, HubProps } from "./controller.js";
 export function HubSelection({ hub, ui }: { hub: HubController; ui: HubUi; props: HubProps }) {
-  const { setTab, project, setProject, session, setSession, setTitle, setMemory } = hub;
-  const { text, muted, card, button } = ui;
-  return project ? (
-    <View style={card}>
-      <Text style={text}>
-        Project: {project.title}
-        {session ? `  /  Session: ${session.title}` : ""}
+  const active = hub.session?.endpoints.find((item) => item.id === hub.session?.activeEndpointId);
+  let label = hub.project ? "SELECTED PROJECT" : "NO SESSION SELECTED";
+  if (hub.session) label = "SELECTED SESSION";
+  return (
+    <View style={ui.card}>
+      <Text style={ui.muted}>{label}</Text>
+      <Text style={ui.sectionHeading}>
+        {hub.session?.title ?? hub.project?.title ?? "Choose a conversation to continue"}
       </Text>
-      <Text style={muted}>
-        Linked folders and shared memory stay with this project. Each tool keeps its original
-        runtime.
-      </Text>
-      <View style={ROW}>
-        {button("Clear selection", () => {
-          hub.setCatalogOffset(0);
-          setProject(null);
-          setSession(null);
-          setTitle("");
-          setMemory("");
-        })}
-        {button("Shared memory", () => {
-          setMemory(session?.memory ?? project.memory);
-          setTab("Memory & Skills");
-        })}
-      </View>
+      {hub.project ? (
+        <Text style={ui.muted}>
+          {hub.project.title}
+          {active
+            ? ` · ${hub.hostName(active.serverId)} · ${active.harness ?? active.provider} · ${active.model ?? "Model not reported"}`
+            : ""}
+        </Text>
+      ) : null}
+      {active ? (
+        <Text selectable numberOfLines={2} style={ui.muted}>
+          {active.cwd}
+        </Text>
+      ) : null}
+      {hub.project ? (
+        <View style={ROW}>
+          {ui.button("Memory & Skills", () => {
+            hub.setMemory(hub.session?.memory ?? hub.project!.memory);
+            hub.setTab("Memory & Skills");
+          })}
+          {ui.button("Clear selection", () => {
+            hub.setCatalogOffset(0);
+            hub.setProject(null);
+            hub.setSession(null);
+            hub.setTitle("");
+            hub.setMemory("");
+          })}
+        </View>
+      ) : null}
     </View>
-  ) : null;
+  );
 }

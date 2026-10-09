@@ -20,6 +20,34 @@ export interface BuiltinTool {
  * These are launch adapters; native loops and sessions remain owned by each tool. */
 export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   {
+    id: "pullboard",
+    name: "Pullboard",
+    description: "Original Git project work board, spec-linked items and independent verification.",
+    capabilities: ["orchestration", "workspace", "git", "skills"],
+    sourceUrl: "https://github.com/pullboard-dev/pullboard",
+    license: "MIT",
+    command: "pullboard",
+    args: ["view", "--no-open"],
+    install: { kind: "npm", package: "pullboard@0.8.1" },
+    notes: [
+      "Requires Node.js 22.13 or newer and Git. Initialize a selected Git project through Run actions; installation never changes project hooks or documents.",
+      "Open terminal starts the original loopback board view. Its private link stays in that terminal. Pullboard does not call a model; original agents own the work and verification.",
+    ],
+  },
+  {
+    id: "docker-skills",
+    name: "Docker Skills",
+    description:
+      "Docker-authored portable skills for Dockerfiles, Compose, Docker Agent and Sandboxes.",
+    capabilities: ["skills", "context"],
+    sourceUrl: "https://github.com/docker/skills",
+    license: "Apache-2.0",
+    notes: [
+      "Set up installs a reviewed source snapshot. Add to Memory & Skills registers original directories for supported project projections without copying skill folders.",
+      "Knowledge skills only: Docker Engine, Compose, Docker Agent and Sandboxes remain separately installed original tools.",
+    ],
+  },
+  {
     id: "claude",
     name: "Claude Code",
     description: "Native agent chat, tools and skills.",
@@ -129,7 +157,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     args: ["session"],
     install: { kind: "native", package: "goose" },
     notes: [
-      "Run goose configure in its terminal to choose a provider. Extensions remain Goose-owned.",
+      "Choose Use existing Codex or Use existing Claude Code in setup; other providers can use the original Goose configuration. Extensions remain Goose-owned.",
       "A selected FamiliarAgent session is connected through Goose's per-launch stdio extension; the native profile and conversation are preserved.",
     ],
   },
@@ -141,10 +169,10 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     sourceUrl: "https://github.com/mvschwarz/openrig",
     license: "Apache-2.0",
     command: "rig",
-    args: ["tui", "--shared"],
+    args: ["tui"],
     install: { kind: "npm", package: "@openrig/cli" },
     notes: [
-      "The dashboard connects to an existing OpenRig daemon. Team creation, approvals and loops remain in OpenRig.",
+      "The foreground dashboard connects to an existing OpenRig daemon. Team creation, approvals and loops remain in OpenRig. It does not reuse a shared tmux shell with an older PATH.",
     ],
   },
   {

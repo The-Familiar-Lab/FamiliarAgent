@@ -47,6 +47,28 @@ function update(subscriptionId: string, seq: number): SessionOutboundMessage {
   };
 }
 
+test("a stream completing during bootstrap preserves its accepted snapshot", async () => {
+  const c = connection();
+  const handle = c.observe();
+  const seen: SessionOutboundMessage[] = [];
+  handle.subscribe({
+    snapshot: () => {},
+    update: (message) => {
+      seen.push(message);
+      void handle.release();
+    },
+  });
+  c.requests[0]!("short-lived");
+  c.subscriptions.receive({
+    type: "terminal_stream_exit",
+    payload: { subscriptionId: "short-lived", terminalId: "terminal", exitCode: 127 },
+  });
+  await expect(handle.ready).resolves.toMatchObject({ subscriptionId: "short-lived" });
+  await handle.release();
+  expect(seen).toHaveLength(1);
+  expect(c.released).toEqual(["short-lived"]);
+});
+
 test("a caller consuming the snapshot later receives its buffered updates in order", async () => {
   const c = connection();
   const a = c.observe();

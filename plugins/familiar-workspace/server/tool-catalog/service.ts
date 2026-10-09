@@ -1,3 +1,4 @@
+import { guideForTool } from "./guides.js";
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
@@ -17,6 +18,7 @@ import { BUILTIN_TOOLS, type BuiltinTool } from "./catalog.js";
 import { directory, readJson, writeJson, writeText } from "./files.js";
 import { prepareNativeInstaller } from "./installers.js";
 import { integratedInstallation } from "../integrated-tools/setup.js";
+import { gooseAdapterBins, gooseProviderEnvironment } from "./goose-provider.js";
 
 interface Options {
   home?: string;
@@ -364,6 +366,7 @@ export class ToolCatalog {
     });
     if (tool.id === "aider" && contextPath && !tool.registration?.launch)
       args.push("--read", contextPath);
+    const environment = await this.terminalEnvironment(tool);
     return {
       toolId: tool.id,
       action: "launch",
@@ -371,7 +374,7 @@ export class ToolCatalog {
       cwd,
       command: "/usr/bin/env",
       args: [
-        `PATH=${this.binDirectories().join(path.delimiter)}`,
+        ...Object.entries(environment).map(([key, value]) => `${key}=${value}`),
         ...(sessionId ? [`FAMILIAR_SESSION_ID=${sessionId}`] : []),
         ...(contextPath ? [`FAMILIAR_CONTEXT_FILE=${contextPath}`] : []),
         command,
@@ -387,6 +390,14 @@ export class ToolCatalog {
             ]
           : []),
       ],
+    };
+  }
+  private async terminalEnvironment(tool: RegisteredTool): Promise<Record<string, string>> {
+    const searchPath = this.searchPath();
+    if (tool.id !== "goose") return { PATH: searchPath };
+    return {
+      PATH: [searchPath, ...gooseAdapterBins(this.root)].join(path.delimiter),
+      ...(tool.registration?.launch ? {} : await gooseProviderEnvironment(this.root)),
     };
   }
   private async contextFile(file: string): Promise<string> {
@@ -406,6 +417,11 @@ function describeTool(tool: RegisteredTool) {
     nativeProvider: tool.nativeProvider,
     sourceUrl: custom?.sourceUrl ?? tool.sourceUrl,
     license: tool.license,
+    guide: guideForTool({
+      ...tool,
+      name: custom?.name ?? tool.name,
+      description: custom?.description || tool.description,
+    }),
   };
 }
 function entryNotes(tool: RegisteredTool, modes: ToolEntry["modes"]): string[] {

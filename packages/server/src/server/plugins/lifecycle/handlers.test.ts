@@ -98,3 +98,48 @@ test("session-open hooks reject changes to session identity instead of silently 
     ),
   ).rejects.toThrow("agent.session_open hooks can only change env");
 });
+
+test("agent creation labels survive legacy transforms and remain caller-owned across hooks", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  const labels = { familiarAdvisor: "true", source: "original" };
+  hooks.before("agent.create", ({ request }) => {
+    expect(request.labels).toEqual(labels);
+    return { config: { ...request.config, title: "Transformed" }, env: request.env };
+  });
+  hooks.before("agent.create", ({ request }) => {
+    expect(request.labels).toEqual(labels);
+    return { ...request, labels: { source: "original", familiarAdvisor: "true" } };
+  });
+  expect(
+    await hooks.invoke(
+      "metadata",
+      "before",
+      "agent.create",
+      { config: { provider: "codex", cwd: "/project" }, labels },
+      paseo,
+    ),
+  ).toMatchObject({ config: { title: "Transformed" }, labels });
+  expect(labels).toEqual({ familiarAdvisor: "true", source: "original" });
+});
+
+test.each([{}, { familiarAdvisor: "true" }, { owner: "changed" }])(
+  "agent creation hooks reject changed labels %j before later hooks run",
+  async (changed) => {
+    const hooks = new PluginHookHandlers(() => {});
+    let laterRan = false;
+    hooks.before("agent.create", ({ request }) => ({ ...request, labels: changed }));
+    hooks.before("agent.create", () => {
+      laterRan = true;
+    });
+    await expect(
+      hooks.invoke(
+        "changed-metadata",
+        "before",
+        "agent.create",
+        { config: { provider: "codex", cwd: "/project" }, labels: { owner: "original" } },
+        paseo,
+      ),
+    ).rejects.toThrow("cannot change caller labels");
+    expect(laterRan).toBe(false);
+  },
+);

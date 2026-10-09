@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { toolGuideSchema } from "@getpaseo/protocol/familiar-tools";
 
 export const toolId = z
   .string()
@@ -60,6 +61,7 @@ export const toolEntry = z.object({
   id: toolId,
   name: z.string(),
   description: z.string(),
+  guide: toolGuideSchema.optional(),
   capabilities: z.array(toolCapability),
   modes: z.array(z.enum(["agent", "terminal", "web", "desktop", "reference"])),
   nativeProvider: z.string().optional(),
@@ -195,6 +197,44 @@ export const saveResources = defineRpc({
   input: resourceDocument,
   output: resourceDocument,
 });
+export const useSkills = defineRpc({
+  name: "resources.use-skills",
+  input: z
+    .object({
+      expectedRevision: z.number().int().nonnegative(),
+      skills: z.array(sharedSkill).min(1).max(256),
+    })
+    .strict(),
+  output: z
+    .object({ status: z.enum(["added", "unchanged"]), resources: resourceDocument })
+    .strict(),
+});
+export const readSkill = defineRpc({
+  name: "resources.skill.read",
+  input: z
+    .object({ id: toolId, maxCharacters: z.number().int().min(256).max(65536).default(16384) })
+    .strict(),
+  output: z
+    .object({
+      id: toolId,
+      path: localPath,
+      enabled: z.boolean(),
+      text: z.string(),
+      truncated: z.boolean(),
+    })
+    .strict(),
+});
+export const changeSkill = defineRpc({
+  name: "resources.skill.change",
+  input: z
+    .object({
+      expectedRevision: z.number().int().nonnegative(),
+      id: toolId,
+      action: z.enum(["enable", "disable", "remove"]),
+    })
+    .strict(),
+  output: resourceDocument,
+});
 export const useHttpResource = defineRpc({
   name: "resources.use-http",
   input: z
@@ -211,6 +251,7 @@ export const projectResources = defineRpc({
       cwd: localPath,
       toolId: z.enum(["claude", "codex", "cursor"]),
       remove: z.boolean().default(false),
+      expectedRevision: z.number().int().nonnegative().optional(),
     })
     .strict(),
   output: z.object({

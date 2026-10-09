@@ -1,11 +1,14 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { HubController } from "./controller.js";
 
 export const ROW = { flexDirection: "row", flexWrap: "wrap", gap: 8 } as const;
-const CONTENT = { padding: 24, gap: 16 };
+const CONTENT = { padding: 12, gap: 12 };
 const FILL = { flex: 1 };
+const PICKER = { gap: 6 };
+const OPTIONS = { gap: 4, paddingLeft: 8 };
+const DISCLOSURE = { gap: 8 };
 function usePalette(theme: PluginSurfaceProps["theme"]) {
   return useMemo(() => {
     const colors = theme.colors;
@@ -25,14 +28,14 @@ function usePalette(theme: PluginSurfaceProps["theme"]) {
       noteInput: { ...input, minHeight: 100, textAlignVertical: "top" as const },
       muted: { color: colors.foregroundMuted, fontSize: 12 },
       card: {
-        padding: 16,
-        borderRadius: 12,
+        padding: 12,
+        borderRadius: 10,
         borderWidth: 1,
         borderColor: colors.border,
         backgroundColor: colors.surface1,
         gap: 10,
       },
-      heading: { ...text, fontSize: 28, fontWeight: "600" as const },
+      heading: { ...text, fontSize: 22, fontWeight: "600" as const },
       sectionHeading: { ...text, fontSize: 18 },
       toolHeading: { ...text, fontSize: 17 },
       error: { color: colors.statusDanger },
@@ -88,7 +91,7 @@ function HubButton({
 }) {
   const style = useMemo(
     () => ({
-      padding: 10,
+      padding: 8,
       borderRadius: 8,
       backgroundColor: selected ? theme.colors.accent : theme.colors.surface2,
       opacity: disabled ? 0.45 : 1,
@@ -115,24 +118,81 @@ function HubButton({
   );
 }
 export function HubTargetPicker({ hub, ui }: { hub: HubController; ui: HubUi }) {
+  const options = useMemo(
+    () =>
+      hub.hosts.map((item) => ({
+        id: item.serverId,
+        label: `${item.label}${item.status === "online" ? "" : " · offline"}`,
+        disabled: item.status !== "online",
+      })),
+    [hub.hosts],
+  );
   return (
-    <View style={ROW}>
-      {hub.online.map((item) => (
-        <View key={item.serverId}>
-          {ui.button(
-            item.label,
-            () => {
-              hub.setTarget(item.serverId);
-              const mapped = hub.project?.resources.find(
-                (resource) => resource.kind === "codebase" && resource.serverId === item.serverId,
-              );
-              hub.setCwd(mapped?.locator ?? "");
-            },
-            false,
-            hub.target === item.serverId,
-          )}
+    <HubPicker
+      label="Run on"
+      value={hub.target}
+      options={options}
+      onChange={hub.setTarget}
+      ui={ui}
+    />
+  );
+}
+
+export function HubPicker({
+  label,
+  value,
+  options,
+  onChange,
+  ui,
+}: {
+  label: string;
+  value: string;
+  options: { id: string; label: string; disabled?: boolean }[];
+  onChange: (id: string) => void;
+  ui: HubUi;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={PICKER}>
+      {ui.button(
+        `${label}: ${options.find((item) => item.id === value)?.label ?? "Choose…"} ${open ? "▴" : "▾"}`,
+        () => setOpen(!open),
+      )}
+      {open ? (
+        <View style={OPTIONS}>
+          {options.map((item) => (
+            <View key={item.id}>
+              {ui.button(
+                item.label,
+                () => {
+                  onChange(item.id);
+                  setOpen(false);
+                },
+                item.disabled,
+                value === item.id,
+              )}
+            </View>
+          ))}
         </View>
-      ))}
+      ) : null}
+    </View>
+  );
+}
+
+export function HubDisclosure({
+  label,
+  ui,
+  children,
+}: {
+  label: string;
+  ui: HubUi;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={DISCLOSURE}>
+      {ui.button(`${open ? "▾" : "▸"} ${label}`, () => setOpen(!open))}
+      {open ? children : null}
     </View>
   );
 }

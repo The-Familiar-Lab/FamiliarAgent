@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
+import { FamiliarToolHelp } from "@/components/familiar-tool-help";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { Theme } from "@/styles/theme";
 import {
@@ -21,6 +22,8 @@ import type { PaneHost } from "@/panels/panel-manifest";
 import type { PanelIconProps } from "@/panels/panel-registry";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const ITEM_ROW = { flexDirection: "row", alignItems: "center" } as const;
+const ITEM_BODY = { flex: 1 } as const;
 
 function LaunchItemIconGlyph({
   Icon,
@@ -64,15 +67,20 @@ function WorkspaceNewTabMenuItem({
   const handleSelect = useCallback(() => item.launch({ kind: "open", paneId }), [item, paneId]);
 
   return (
-    <DropdownMenuItem
-      testID={`workspace-new-tab-menu-${item.id}`}
-      leading={leading}
-      trailing={trailing}
-      disabled={item.disabled}
-      onSelect={handleSelect}
-    >
-      {item.label}
-    </DropdownMenuItem>
+    <View style={ITEM_ROW}>
+      <View style={ITEM_BODY}>
+        <DropdownMenuItem
+          testID={`workspace-new-tab-menu-${item.id}`}
+          leading={leading}
+          trailing={trailing}
+          disabled={item.disabled}
+          onSelect={handleSelect}
+        >
+          {item.label}
+        </DropdownMenuItem>
+      </View>
+      {item.guide ? <FamiliarToolHelp name={item.label} guide={item.guide} /> : null}
+    </View>
   );
 }
 
@@ -114,6 +122,7 @@ export function WorkspaceNewTabMenuContent({
         <View key={group.id}>
           {index > 0 ? <DropdownMenuSeparator /> : null}
           {group.label ? <DropdownMenuLabel>{group.label}</DropdownMenuLabel> : null}
+          {group.notice ? <DropdownMenuLabel>{group.notice}</DropdownMenuLabel> : null}
           {group.items.map((item) => (
             <WorkspaceNewTabMenuItem key={item.id} item={item} paneId={paneId} />
           ))}

@@ -1,6 +1,7 @@
 import type { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { familiarHubTarget } from "@/workspace-tabs/launcher/internal/familiar-context";
 import {
   profileTakesPrompt,
   substitutePrompt,
@@ -18,6 +19,9 @@ export interface CreateTerminalWorkspaceInput {
   profile: SubstitutableCommand | null;
   /** Terminal tab name: the profile's display name, or undefined for shell. */
   profileName: string | undefined;
+  /** Verified unchanged built-in harness shortcut; setup resolves its installed executable. */
+  familiarToolId?: string;
+  prepareProfileLaunch?: (cwd: string) => Promise<SubstitutableCommand>;
   ensureWorkspace: (input: {
     cwd: string;
     prompt: string;
@@ -63,7 +67,23 @@ export async function runCreateTerminalWorkspace(
     attachments: [],
     withInitialAgent: false,
   });
-  const resolved = profile ? substitutePrompt(profile, prompt) : null;
+  if (input.familiarToolId) {
+    navigate(
+      serverId,
+      ensuredWorkspace.id,
+      familiarHubTarget({
+        serverId,
+        workspaceId: ensuredWorkspace.id,
+        cwd: ensuredWorkspace.workspaceDirectory,
+        toolId: input.familiarToolId,
+      }),
+    );
+    return;
+  }
+  const resolved = profile
+    ? ((await input.prepareProfileLaunch?.(ensuredWorkspace.workspaceDirectory)) ??
+      substitutePrompt(profile, prompt))
+    : null;
   const createdTerminal = await createTerminal({
     workspaceDirectory: ensuredWorkspace.workspaceDirectory,
     workspaceId: ensuredWorkspace.id,

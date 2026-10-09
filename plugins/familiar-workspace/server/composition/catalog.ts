@@ -51,7 +51,12 @@ export async function scopedCatalogCall(
     );
     if (
       update.title !== current.title ||
-      JSON.stringify(update.resources) !== JSON.stringify(current.resources)
+      JSON.stringify(update.resources) !== JSON.stringify(current.resources) ||
+      (update.memoryEnabled !== undefined &&
+        update.memoryEnabled !== (current.memoryEnabled ?? true)) ||
+      (update.disabledResourceIds !== undefined &&
+        JSON.stringify(update.disabledResourceIds) !==
+          JSON.stringify(current.disabledResourceIds ?? []))
     )
       throw new Error("A session context link can update shared memory only");
   }

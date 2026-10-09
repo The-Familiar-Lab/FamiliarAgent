@@ -1,10 +1,12 @@
 import { useCallback, useState } from "react";
+import { SessionSkills } from "./session-skills.js";
 import { Text, View } from "react-native";
 import { hostRpc } from "../fleet.js";
 import { projectResources, sharedMcp } from "../../shared/tool-catalog.js";
-import { ROW, HubTargetPicker, type HubUi } from "./ui.js";
+import { ROW, HubDisclosure, HubPicker, HubTargetPicker, type HubUi } from "./ui.js";
 import { mapSkillOnHost, shareHttpWithHosts, type HostResources } from "./resources.js";
 import type { HubController, HubProps } from "./controller.js";
+const providerOptions = ["claude", "codex", "cursor"].map((id) => ({ id, label: id }));
 function memoryLabel(hub: HubController) {
   if (hub.session) return `Session memory: ${hub.session.title}`;
   if (hub.project) return `Project memory: ${hub.project.title}`;
@@ -86,11 +88,16 @@ function ResourceHostCard({
 }
 export function HubMemory({ hub, ui }: { hub: HubController; ui: HubUi; props: HubProps }) {
   const [advanced, setAdvanced] = useState(false);
+  const [applyProvider, setApplyProvider] = useState<"claude" | "codex" | "cursor">("codex");
   const [skillOrigin, setSkillOrigin] = useState<SkillOrigin | null>(null);
   const [mappedPath, setMappedPath] = useState("");
   const [mcpType, setMcpType] = useState<"http" | "stdio">("http");
   const [mcpCommand, setMcpCommand] = useState("");
   const [mcpArgs, setMcpArgs] = useState("[]");
+  const selectProvider = useCallback(
+    (value: string) => setApplyProvider(value as "claude" | "codex" | "cursor"),
+    [],
+  );
   const selectSkill = useCallback((origin: SkillOrigin) => {
     setSkillOrigin(origin);
     setMappedPath("");
@@ -159,6 +166,24 @@ export function HubMemory({ hub, ui }: { hub: HubController; ui: HubUi; props: H
     );
     await hub.reloadResources();
   };
+  const removeSkill = async (id: string) => {
+    if (!resources) return;
+    await hub.saveOwnedResources({
+      ...resources,
+      skills: resources.skills.filter((item) => item.id !== id),
+    });
+    hub.setNotice(
+      "Skill link removed. Original files are unchanged. Apply to current project to update native links.",
+    );
+  };
+  const removeMcp = async (id: string) => {
+    if (resources)
+      await hub.saveOwnedResources({
+        ...resources,
+        mcp: resources.mcp.filter((item) => item.id !== id),
+      });
+  };
+
   const applySkills = async (provider: "claude" | "codex" | "cursor") => {
     const result = await hostRpc(hub.target, projectResources, { cwd: hub.cwd, toolId: provider });
     hub.setNotice(
@@ -171,6 +196,7 @@ export function HubMemory({ hub, ui }: { hub: HubController; ui: HubUi; props: H
   };
   return (
     <>
+      <SessionSkills hub={hub} ui={ui} />
       <View style={ui.card}>
         <Text style={ui.text}>{memoryLabel(hub)}</Text>
         {ui.field("Decisions, constraints and handoff notes", hub.memory, hub.setMemory, true)}
@@ -195,135 +221,150 @@ export function HubMemory({ hub, ui }: { hub: HubController; ui: HubUi; props: H
           replaces the text in this editor.
         </Text>
       </View>
-      <Text style={ui.sectionHeading}>Skills & MCP · all servers</Text>
-      {hub.resourceCatalog
-        .filter((item) => hub.filter === "all" || item.serverId === hub.filter)
-        .map((item) => (
-          <ResourceHostCard
-            key={item.serverId}
-            item={item}
-            hub={hub}
-            ui={ui}
-            selectSkill={selectSkill}
-          />
-        ))}
-      {skillOrigin ? (
-        <View style={ui.card}>
-          <Text style={ui.text}>Map skill {skillOrigin.id}</Text>
-          <Text selectable style={ui.muted}>
-            Source: {skillOrigin.label} · {skillOrigin.path}
-          </Text>
-          <HubTargetPicker hub={hub} ui={ui} />
-          {ui.field("Existing skill directory on destination server", mappedPath, setMappedPath)}
-          <Text style={ui.muted}>
-            Use an existing directory containing SKILL.md, including a shared mount. This records
-            its location without copying the source directory.
-          </Text>
-          <View style={ROW}>
-            {ui.button(
-              "Save skill mapping",
-              () => {
-                void hub.run(mapSkill);
-              },
-              !mappedPath.trim() ||
-                hub.target === skillOrigin.serverId ||
-                hub.targetHost?.status !== "online",
-            )}
-            {ui.button("Cancel mapping", () => setSkillOrigin(null))}
-          </View>
-        </View>
-      ) : null}
-      <View style={ui.card}>
-        <Text style={ui.text}>Manage {hub.hostName(hub.target)}</Text>
-        <HubTargetPicker hub={hub} ui={ui} />
-        {ui.button("Reload resources", () => {
-          void hub.run(hub.reloadResources);
-        })}
-        <Text style={ui.muted}>
-          Resources keep their server ownership. Enabled MCP entries are applied to new supported
-          agents; skill links use the original directories.
-        </Text>
-        {resources?.skills.map((skill) => (
-          <View key={skill.id} style={ROW}>
-            <Text style={ui.text}>
-              {skill.id} · {skill.path}
+      <HubDisclosure label="Advanced · Library defaults, native project links & MCP" ui={ui}>
+        <HubDisclosure label="Skills & MCP · browse all servers" ui={ui}>
+          <Text style={ui.sectionHeading}>Skills & MCP · all servers</Text>
+          {hub.resourceCatalog
+            .filter((item) => hub.filter === "all" || item.serverId === hub.filter)
+            .map((item) => (
+              <ResourceHostCard
+                key={item.serverId}
+                item={item}
+                hub={hub}
+                ui={ui}
+                selectSkill={selectSkill}
+              />
+            ))}
+        </HubDisclosure>
+        {skillOrigin ? (
+          <View style={ui.card}>
+            <Text style={ui.text}>Map skill {skillOrigin.id}</Text>
+            <Text selectable style={ui.muted}>
+              Source: {skillOrigin.label} · {skillOrigin.path}
             </Text>
-            {ui.button(skill.enabled ? "Disable skill" : "Enable skill", () => {
-              void hub.run(() => toggleSkill(skill.id));
-            })}
-          </View>
-        ))}
-        {resources?.mcp.map((mcp) => (
-          <View key={mcp.id} style={ROW}>
-            <Text style={ui.text}>
-              {mcp.id} · {mcp.type}
+            <HubTargetPicker hub={hub} ui={ui} />
+            {ui.field("Existing skill directory on destination server", mappedPath, setMappedPath)}
+            <Text style={ui.muted}>
+              Use an existing directory containing SKILL.md, including a shared mount. This records
+              its location without copying the source directory.
             </Text>
-            {ui.button(mcp.enabled ? "Disable MCP" : "Enable MCP", () => {
-              void hub.run(() => toggleMcp(mcp.id));
-            })}
-          </View>
-        ))}
-        {!resources ? (
-          <Text style={ui.muted}>
-            Waiting for this server&apos;s settings. Reconnect or Reload resources.
-          </Text>
-        ) : null}
-        {ui.field("Project folder for shared skills", hub.cwd, hub.setCwd)}
-        <View style={ROW}>
-          {(["claude", "codex", "cursor"] as const).map((provider) => (
-            <View key={provider}>
+            <View style={ROW}>
               {ui.button(
-                `Use skills in ${provider}`,
+                "Save skill mapping",
                 () => {
-                  void hub.run(() => applySkills(provider));
+                  void hub.run(mapSkill);
                 },
-                !hub.cwd || !resources,
+                !mappedPath.trim() ||
+                  hub.target === skillOrigin.serverId ||
+                  hub.targetHost?.status !== "online",
               )}
+              {ui.button("Cancel mapping", () => setSkillOrigin(null))}
+            </View>
+          </View>
+        ) : null}
+        <View style={ui.card}>
+          <Text style={ui.text}>Manage {hub.hostName(hub.target)}</Text>
+          <HubTargetPicker hub={hub} ui={ui} />
+          {ui.button("Reload resources", () => {
+            void hub.run(hub.reloadResources);
+          })}
+          <Text style={ui.muted}>
+            Resources keep their server ownership. Enabled MCP entries are applied to new supported
+            agents; skill links use the original directories.
+          </Text>
+          {resources?.skills.map((skill) => (
+            <View key={skill.id} style={ROW}>
+              <Text style={ui.text}>
+                {skill.id} · {skill.path}
+              </Text>
+              {ui.button(skill.enabled ? "Disable skill" : "Enable skill", () => {
+                void hub.run(() => toggleSkill(skill.id));
+              })}
+              {ui.button("Remove skill link", () => {
+                void hub.run(() => removeSkill(skill.id));
+              })}
             </View>
           ))}
-        </View>
-        {ui.button(advanced ? "Hide Advanced" : "Advanced · Add skill or MCP", () =>
-          setAdvanced(!advanced),
-        )}
-        {advanced ? (
-          <>
-            {ui.field("Skill name", hub.skillName, hub.setSkillName)}
-            {ui.field("Skill directory on selected server", hub.skillPath, hub.setSkillPath)}
-            {ui.button(
-              "Share skill",
-              () => {
-                void hub.run(addSkill);
-              },
-              !resources || !hub.skillName || !hub.skillPath,
-            )}
-            {ui.field("MCP name", hub.mcpName, hub.setMcpName)}
-            <View style={ROW}>
-              {ui.button("HTTP", () => setMcpType("http"), false, mcpType === "http")}
-              {ui.button(
-                "Local command (stdio)",
-                () => setMcpType("stdio"),
-                false,
-                mcpType === "stdio",
-              )}
+          {resources?.mcp.map((mcp) => (
+            <View key={mcp.id} style={ROW}>
+              <Text style={ui.text}>
+                {mcp.id} · {mcp.type}
+              </Text>
+              {ui.button(mcp.enabled ? "Disable MCP" : "Enable MCP", () => {
+                void hub.run(() => toggleMcp(mcp.id));
+              })}
+              {ui.button("Remove MCP link", () => {
+                void hub.run(() => removeMcp(mcp.id));
+              })}
             </View>
-            {mcpType === "http" ? (
-              ui.field("MCP HTTP URL", hub.mcpUrl, hub.setMcpUrl)
-            ) : (
-              <>
-                {ui.field("MCP command on selected server", mcpCommand, setMcpCommand)}
-                {ui.field("MCP arguments (JSON array)", mcpArgs, setMcpArgs)}
-              </>
-            )}
-            {ui.button(
-              "Share MCP",
-              () => {
-                void hub.run(addMcp);
-              },
-              !resources || !hub.mcpName || !(mcpType === "http" ? hub.mcpUrl : mcpCommand),
-            )}
-          </>
-        ) : null}
-      </View>
+          ))}
+          {!resources ? (
+            <Text style={ui.muted}>
+              Waiting for this server&apos;s settings. Reconnect or Reload resources.
+            </Text>
+          ) : null}
+          {ui.field("Project folder for shared skills", hub.cwd, hub.setCwd)}
+          <HubPicker
+            label="Project tool"
+            value={applyProvider}
+            options={providerOptions}
+            onChange={selectProvider}
+            ui={ui}
+          />
+          {ui.button(
+            "Apply to current project",
+            () => {
+              void hub.run(() => applySkills(applyProvider));
+            },
+            !hub.cwd || !resources,
+          )}
+          <Text style={ui.muted}>
+            Updates owned links on disk. Native tools rescan skills on future turns or their next
+            restart. Removing a link does not erase context the current model has already read.
+          </Text>
+          {ui.button(advanced ? "Hide Advanced" : "Advanced · Add skill or MCP", () =>
+            setAdvanced(!advanced),
+          )}
+          {advanced ? (
+            <>
+              {ui.field("Skill name", hub.skillName, hub.setSkillName)}
+              {ui.field("Skill directory on selected server", hub.skillPath, hub.setSkillPath)}
+              {ui.button(
+                "Share skill",
+                () => {
+                  void hub.run(addSkill);
+                },
+                !resources || !hub.skillName || !hub.skillPath,
+              )}
+              {ui.field("MCP name", hub.mcpName, hub.setMcpName)}
+              <View style={ROW}>
+                {ui.button("HTTP", () => setMcpType("http"), false, mcpType === "http")}
+                {ui.button(
+                  "Local command (stdio)",
+                  () => setMcpType("stdio"),
+                  false,
+                  mcpType === "stdio",
+                )}
+              </View>
+              {mcpType === "http" ? (
+                ui.field("MCP HTTP URL", hub.mcpUrl, hub.setMcpUrl)
+              ) : (
+                <>
+                  {ui.field("MCP command on selected server", mcpCommand, setMcpCommand)}
+                  {ui.field("MCP arguments (JSON array)", mcpArgs, setMcpArgs)}
+                </>
+              )}
+              {ui.button(
+                "Share MCP",
+                () => {
+                  void hub.run(addMcp);
+                },
+                !resources || !hub.mcpName || !(mcpType === "http" ? hub.mcpUrl : mcpCommand),
+              )}
+            </>
+          ) : null}
+        </View>
+      </HubDisclosure>
     </>
   );
 }

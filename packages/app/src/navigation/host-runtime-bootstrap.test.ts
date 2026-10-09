@@ -385,14 +385,36 @@ describe("resolveHostIndexRoute", () => {
     ).toEqual("/open-project");
   });
 
-  it("opens global project selection when no workspace is remembered", () => {
+  it("opens Familiar Hub onboarding when no workspace is remembered", () => {
     expect(
       resolveHostIndexRoute({
         serverId: "server-saved",
         workspaceSelection: null,
         workspaceSelectionStatus: "unknown",
       }),
-    ).toEqual("/open-project");
+    ).toEqual("/h/server-saved/plugin/familiar-workspace/surface/main");
+  });
+
+  it("routes the first connected host from startup through its own Hub without creating a workspace", () => {
+    const input = {
+      startupBlocker: { kind: "none" as const },
+      hostRegistryStatus: "ready" as const,
+      hosts: [{ serverId: "new-host" }],
+      workspaceSelection: null,
+      workspaceSelectionStatus: "unknown" as const,
+    };
+    expect(
+      resolveStartupRoute({
+        ...input,
+        route: { kind: "index", pathname: "/" },
+        anyOnlineHostServerId: "new-host",
+        isWorkspaceSelectionLoaded: true,
+        hasGivenUpWaitingForHost: false,
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/new-host" });
+    expect(resolveHostIndexRoute({ ...input, serverId: "new-host" })).toEqual(
+      "/h/new-host/plugin/familiar-workspace/surface/main",
+    );
   });
 });
 

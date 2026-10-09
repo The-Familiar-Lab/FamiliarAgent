@@ -39,6 +39,7 @@ import {
   resultCatalogContracts,
 } from "./result-handlers.js";
 
+import { ResourceLibrary } from "../tool-catalog/resources.js";
 import { ToolActionSettings } from "../tool-actions/settings.js";
 import type { ToolActions } from "../tool-actions/service.js";
 import { registerToolActions } from "../tool-actions/register.js";
@@ -61,6 +62,7 @@ export function registerComposition(
     ...options,
     toolReader: options.actions ? toolResultReader(options.actions.store) : options.toolReader,
   };
+  const skills = new ResourceLibrary(options.home);
   const store = new CompositionStore(options.directory);
   const results = new ResultStore(
     options.directory,
@@ -173,7 +175,7 @@ export function registerComposition(
         paseo
           ? routedResourceReader({
               ...options,
-              local: localResourceReader({ ...options, paseo }),
+              local: localResourceReader({ ...options, skills, paseo }),
               bridge: (reference) => bridgeRegistry.reader(reference),
             })
           : undefined,
@@ -181,7 +183,7 @@ export function registerComposition(
     reader: (paseo) =>
       routedResourceReader({
         ...options,
-        local: localResourceReader({ ...options, paseo }),
+        local: localResourceReader({ ...options, skills, paseo }),
         bridge: (reference) => bridgeRegistry.reader(reference),
       }),
   });
@@ -221,7 +223,7 @@ export function registerComposition(
       );
     const replay = store.replayFork(input);
     if (replay) return replay;
-    const local = localResourceReader({ ...options, paseo });
+    const local = localResourceReader({ ...options, skills, paseo });
     const reader = routedResourceReader({
       ...options,
       local,
@@ -247,7 +249,7 @@ export function registerComposition(
         forwarded: input.forwarded,
       }),
     );
-    const local = localResourceReader({ ...options, paseo });
+    const local = localResourceReader({ ...options, skills, paseo });
     return boundedSourceRead(
       resource,
       input,
@@ -260,7 +262,7 @@ export function registerComposition(
   });
   // This route deliberately stays on the selected reader host, even if its catalog is remote.
   server.handle(readCompositionSource, async ({ resource, ...input }, { paseo }) => {
-    const local = localResourceReader({ ...options, paseo });
+    const local = localResourceReader({ ...options, skills, paseo });
     return boundedSourceRead(
       resource,
       input,
@@ -274,7 +276,10 @@ export function registerComposition(
   server.handle(ensureCompositionBridge, (input, { paseo }) =>
     bridges.ensure(
       input,
-      routedResourceReader({ ...options, local: localResourceReader({ ...options, paseo }) }),
+      routedResourceReader({
+        ...options,
+        local: localResourceReader({ ...options, skills, paseo }),
+      }),
       catalogInvoke,
     ),
   );
@@ -282,7 +287,7 @@ export function registerComposition(
     await bridgeRegistry.install(credential);
     return { installed: true as const };
   });
-  server.handle(compositionRuntime, async ({ sessionId }) => {
+  server.handle(compositionRuntime, async ({ sessionId, readOnly }) => {
     if (!options.cliPath || !path.isAbsolute(options.cliPath))
       throw new Error("FamiliarAgent CLI is not configured on this server");
     await access(options.cliPath, process.platform === "win32" ? constants.F_OK : constants.X_OK);
@@ -292,7 +297,15 @@ export function registerComposition(
         familiar_context: {
           type: "stdio" as const,
           command: options.cliPath,
-          args: ["context", "mcp", "--home", options.home, "--session", sessionId],
+          args: [
+            "context",
+            "mcp",
+            "--home",
+            options.home,
+            "--session",
+            sessionId,
+            ...(readOnly ? ["--read-only"] : []),
+          ],
           env: { PASEO_HOME: options.home },
         },
       },

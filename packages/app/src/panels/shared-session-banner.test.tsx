@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import React from "react";
-import { router } from "expo-router";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SharedSessionBanner } from "./shared-session-banner";
 
@@ -20,7 +20,7 @@ vi.mock("@/stores/navigation-active-workspace-store", () => ({
   navigateToWorkspace: vi.fn(),
 }));
 vi.mock("@/stores/workspace-layout-store", () => ({
-  useWorkspaceLayoutStore: { getState: vi.fn() },
+  useWorkspaceLayoutStore: { getState: () => ({ showExplorerSidebar: () => "explorer" }) },
 }));
 
 function session(labels: Record<string, string>): FixtureSession {
@@ -30,7 +30,7 @@ function session(labels: Record<string, string>): FixtureSession {
 describe("shared session banner", () => {
   beforeEach(() => {
     fixture.sessions = {};
-    vi.mocked(router.push).mockClear();
+    vi.mocked(navigateToWorkspace).mockClear();
   });
   afterEach(cleanup);
 
@@ -46,6 +46,8 @@ describe("shared session banner", () => {
       <SharedSessionBanner serverId="local" workspaceId="workspace" agentId="agent/one" />,
     );
     expect(view.queryByTestId("shared-session-banner")).toBeNull();
+    expect(view.getByRole("button", { name: "Open Familiar Hub" })).toBeTruthy();
+    expect(navigateToWorkspace).not.toHaveBeenCalled();
   });
 
   it("opens the current agent's Hub on its own server, including after changing hosts", () => {
@@ -60,15 +62,29 @@ describe("shared session banner", () => {
       view.getByText("Memory and earlier conversations are available to this agent."),
     ).toBeTruthy();
     fireEvent.click(view.getByRole("button", { name: "Open Familiar Hub" }));
-    expect(router.push).toHaveBeenLastCalledWith(
-      "/h/remote%2Fhost/plugin/familiar-workspace/surface/main?param.agentId=agent%2Fone",
-    );
+    expect(navigateToWorkspace).toHaveBeenLastCalledWith({
+      serverId: "remote/host",
+      workspaceId: "workspace",
+      target: {
+        kind: "plugin",
+        pluginId: "familiar-workspace",
+        panelId: "shared",
+        context: "workspace",
+        params: { serverId: "remote/host", workspaceId: "workspace", agentId: "agent/one" },
+      },
+      placement: { mode: "pane", paneId: "explorer" },
+    });
     view.rerender(
       <SharedSessionBanner serverId="local" workspaceId="workspace" agentId="agent/one" />,
     );
     fireEvent.click(view.getByRole("button", { name: "Open Familiar Hub" }));
-    expect(router.push).toHaveBeenLastCalledWith(
-      "/h/local/plugin/familiar-workspace/surface/main?param.agentId=agent%2Fone",
+    expect(navigateToWorkspace).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        serverId: "local",
+        target: expect.objectContaining({
+          params: { serverId: "local", workspaceId: "workspace", agentId: "agent/one" },
+        }),
+      }),
     );
   });
 

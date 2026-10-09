@@ -1198,6 +1198,9 @@ describe("terminal snapshot failure", () => {
           payload: {
             terminalId: "exit-terminal",
             subscriptionId: healthy.id,
+            exitCode: 0,
+            signal: null,
+            lastOutputLines: [],
           },
         });
         expect(f.delivery.registrationCount).toBe(0);
@@ -1266,7 +1269,7 @@ test.each([false, true])(
       );
       expect(f.frames.at(-1)?.message).toEqual({
         type: "terminal_stream_exit",
-        payload: { terminalId: "exit-terminal" },
+        payload: { terminalId: "exit-terminal", exitCode: 0, signal: null, lastOutputLines: [] },
       });
       expect(f.delivery.registrationCount).toBe(0);
       expect(f.outputs.size + f.exits.size).toBe(0);

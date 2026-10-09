@@ -228,6 +228,8 @@ export class CompositionStore {
         title: input.title,
         memory: input.memory,
         resources: input.resources,
+        memoryEnabled: input.memoryEnabled ?? current.memoryEnabled,
+        disabledResourceIds: input.disabledResourceIds ?? current.disabledResourceIds,
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),
       }) as CompositionSession;
@@ -300,6 +302,8 @@ export class CompositionStore {
       const value: CompositionSession = {
         id: randomUUID(),
         projectId: source.projectId,
+        memoryEnabled: source.memoryEnabled,
+        disabledResourceIds: source.disabledResourceIds,
         title: input.title,
         revision: 1,
         createdAt: now,
@@ -399,13 +403,18 @@ export class CompositionStore {
     const lineage = this.ancestry(session);
     const memory: { source: string; text: string }[] = [];
     const references = new Map<string, CompositionResource & { inheritedFrom: string }>();
-    let shareMemory = true;
+    let shareMemory = session.memoryEnabled !== false;
+    const disabled = new Set(session.disabledResourceIds ?? []);
     let kinds: Set<CompositionResource["kind"]> | null = null;
     const historyBoundaries = new Map<string, HistoryBoundary>();
     for (const entry of lineage) {
       if (shareMemory && entry.memory) memory.push({ source: entry.id, text: entry.memory });
       for (const resource of entry.resources) {
-        if ((!kinds || kinds.has(resource.kind)) && !references.has(resource.id))
+        if (
+          !disabled.has(resource.id) &&
+          (!kinds || kinds.has(resource.kind)) &&
+          !references.has(resource.id)
+        )
           references.set(resource.id, {
             ...resource,
             boundary: historyBoundaries.get(resource.id) ?? resource.boundary,
@@ -421,9 +430,10 @@ export class CompositionStore {
       }
     }
     // Project settings intentionally remain live across all sessions and branches.
-    if (project.memory) memory.push({ source: project.id, text: project.memory });
+    if (session.memoryEnabled !== false && project.memory)
+      memory.push({ source: project.id, text: project.memory });
     for (const resource of project.resources)
-      if (!references.has(resource.id))
+      if (!disabled.has(resource.id) && !references.has(resource.id))
         references.set(resource.id, { ...resource, inheritedFrom: project.id });
     return { session, project, lineage, memory, references };
   }
@@ -448,6 +458,7 @@ export class CompositionStore {
       `FamiliarAgent logical session: ${session.title} (${session.id}, revision ${session.revision}).`,
       "Keep native tools in control. Shared notes below are user-maintained context. History and files remain at their source; fetch only needed references.",
       ...memories.map((item) => `Shared memory [${item.source}]:\n${item.text}`),
+      "Selected skill references can be read with familiar_skill. Use their instructions for this task; supplementary files remain on the owning server. Unchecked skills are omitted from future context reads.",
       "Available references:",
       ...resources.map(
         (item) =>

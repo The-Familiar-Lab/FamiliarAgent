@@ -75,9 +75,10 @@ import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
+import { DirectoryBrowser } from "@/components/directory-browser";
 import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
-import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
 import {
   OverlayLayerProvider,
@@ -328,7 +329,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const githubSearchByHost = useHostFeatureMap(hostIds, "workspaceGithubRepositorySearch");
   // COMPAT(projectCreateDirectory): added in v0.1.108, remove gate after 2027-01-15.
   const createDirectoryByHost = useHostFeatureMap(hostIds, "projectCreateDirectory");
-  const localServerId = useLocalDaemonServerId();
   const availableHosts = useMemo<AddProjectHost[]>(
     () =>
       hosts.flatMap((host) => {
@@ -341,7 +341,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             serverId: host.serverId,
             label: host.label,
             canAddProject,
-            canBrowse: canAddProject && getIsElectronRuntime() && localServerId === host.serverId,
+            canBrowse: canAddProject,
             canCloneGithubRepositories: githubCloneByHost.get(host.serverId) === true,
             canSearchGithubRepositories: githubSearchByHost.get(host.serverId) === true,
             canCreateDirectory: createDirectoryByHost.get(host.serverId) === true,
@@ -354,7 +354,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       githubCloneByHost,
       githubSearchByHost,
       hosts,
-      localServerId,
       projectAddByHost,
       stableProjectIdentityByHost,
     ],
@@ -386,6 +385,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const inputRef = useRef<EditingTextInputHandle>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
+  const [directoryBrowserOpen, setDirectoryBrowserOpen] = useState(false);
   const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
   const pageInputValueRef = useRef(page.kind === "method" ? "" : pageInput(page));
   pageInputValueRef.current = page.kind === "method" ? "" : pageInput(page);
@@ -505,7 +505,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const browse = useCallback(async () => {
-    if (!hostId || !isLocalDaemon || browseInFlightRef.current) return;
+    if (!hostId || browseInFlightRef.current) return;
+    if (!isLocalDaemon || !getIsElectronRuntime()) {
+      setDirectoryBrowserOpen(true);
+      return;
+    }
     browseInFlightRef.current = true;
     try {
       const path = await pickDirectory();
@@ -803,7 +807,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [handleKey],
   );
   const setWebOverlayScope = useWebOverlayRegistration({
-    active: isWeb,
+    active: isWeb && !directoryBrowserOpen,
     layer: modalLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
@@ -963,7 +967,31 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     </Modal>
   );
 
-  return createElement(OverlayLayerProvider, { layer: isWeb ? modalLayer : 0 }, modal);
+  const closeDirectoryBrowser = useCallback(() => setDirectoryBrowserOpen(false), []);
+  const selectBrowsedDirectory = useCallback(
+    (path: string) => {
+      setDirectoryBrowserOpen(false);
+      void openAddedProject(path, "method");
+    },
+    [openAddedProject],
+  );
+
+  return createElement(
+    OverlayLayerProvider,
+    { layer: isWeb ? modalLayer : 0 },
+    directoryBrowserOpen && hostId ? (
+      <DirectoryBrowser
+        key={hostId}
+        client={client}
+        serverName={host?.label ?? hostId}
+        initialPath={recommendedPaths[0] ?? "/"}
+        onClose={closeDirectoryBrowser}
+        onSelect={selectBrowsedDirectory}
+      />
+    ) : (
+      modal
+    ),
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -3854,6 +3854,8 @@ function WorkspaceScreenContent({
   const showCreateBrowserTab = getIsElectron();
   const newTabLauncher = useMemo<NewTabLauncher>(
     () => ({
+      workspaceId: normalizedWorkspaceId,
+      cwd: workspaceDirectory ?? undefined,
       showChanges: isGitCheckout,
       showPullRequest: hasPullRequest,
       showBrowser: showCreateBrowserTab,
@@ -3861,6 +3863,8 @@ function WorkspaceScreenContent({
       launch: launchWorkspaceTab,
     }),
     [
+      normalizedWorkspaceId,
+      workspaceDirectory,
       createTerminalDisabled,
       hasPullRequest,
       isGitCheckout,

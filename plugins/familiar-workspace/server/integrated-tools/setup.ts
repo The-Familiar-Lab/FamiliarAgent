@@ -11,6 +11,7 @@ import { integratedInstallPlan } from "./setup-install.js";
 import { integratedRecipe, INTEGRATED_SETUP_IDS } from "./setup-recipes.js";
 import { HYDRA_COMPAT } from "./hydra-compat.js";
 import { prepareCodegRuntime, prepareOrcaCli, privateProfile } from "./setup-runtime.js";
+import { inspectDockerSkills } from "./docker-skills.js";
 
 type Context = Pick<ToolActionContext, "resolveCommand" | "exec">;
 interface SetupOptions {
@@ -177,6 +178,16 @@ export async function readIntegratedSetup(
     );
     return status;
   }
+  if (options.id === "docker-skills") {
+    status.account = "not-required";
+    status.message =
+      "Docker's original knowledge skills are installed. Add references to Memory & Skills to use them with a supported agent.";
+    status.details.push(
+      "This pack does not install Docker, sign in to a registry or run containers. Each original skill documents its own runtime requirements.",
+    );
+    status.actions.push({ id: "configure", label: "Add to Memory & Skills" });
+    return status;
+  }
   if (harness) {
     status.account = "not-checked";
     status.message =
@@ -215,6 +226,7 @@ export function integratedActionDefaults(options: SetupOptions, node: string): D
   const { directory, profile, recipe } = paths(options);
   const map = (actions: string[], parameters: Record<string, string>) =>
     actions.map((action) => ({ action, parameters }));
+  if (options.id === "docker-skills") return map(["inspect", "read"], { packRoot: directory });
   if (options.id === "codey")
     return map(["list", "read", "run", "send"], {
       moduleRoot: directory,
@@ -293,7 +305,11 @@ async function prepareHydra(options: SetupOptions, node: string): Promise<ToolPl
 export async function prepareIntegratedSetup(
   options: SetupOptions & { action: string },
   context: Context,
-): Promise<{ plan?: ToolPlan; settings?: Defaults } | null> {
+): Promise<{
+  plan?: ToolPlan;
+  settings?: Defaults;
+  skills?: { id: string; path: string; enabled: boolean }[];
+} | null> {
   if (!INTEGRATED_SETUP_IDS.includes(options.id)) return null;
   const { recipe, directory, profile } = paths(options);
   const node = await compatibleNode(context);
@@ -334,6 +350,15 @@ export async function prepareIntegratedSetup(
   }
   if (!(await installed(options)))
     throw new Error("Install this original tool first, then choose Check setup.");
+  if (options.id === "docker-skills" && options.action === "configure")
+    return {
+      settings,
+      skills: (await inspectDockerSkills(directory)).map(({ id, path }) => ({
+        id,
+        path,
+        enabled: true,
+      })),
+    };
   if (options.id === "orca" && recipe)
     await prepareOrcaCli(node, join(directory, recipe.verify[0]!), join(profile, "orca-cli"));
   if (options.id === "codeg" && ["start", "configure"].includes(options.action)) {

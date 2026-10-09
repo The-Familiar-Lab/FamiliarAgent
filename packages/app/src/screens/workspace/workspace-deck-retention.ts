@@ -15,6 +15,7 @@ export function resolveWorkspaceDeckRetentionLimit(input: { isNative: boolean })
 interface ReconcileRetainedWorkspaceSelectionsInput {
   currentEntries: RetainedWorkspaceSelection[];
   activeSelection: ActiveWorkspaceSelection | null;
+  visibleSelections?: ActiveWorkspaceSelection[];
   now: number;
   maxMountedWorkspaces?: number;
   inactiveTtlMs?: number;
@@ -69,6 +70,7 @@ export function areRetainedWorkspaceSelectionListsEqual(
 export function reconcileRetainedWorkspaceSelections({
   currentEntries,
   activeSelection,
+  visibleSelections = [],
   now,
   maxMountedWorkspaces = WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
   inactiveTtlMs = WORKSPACE_DECK_INACTIVE_TTL_MS,
@@ -93,6 +95,9 @@ export function reconcileRetainedWorkspaceSelections({
 
   if (activeSelection) {
     appendEntry({ selection: activeSelection, inactiveSince: null });
+  }
+  for (const selection of visibleSelections) {
+    appendEntry({ selection, inactiveSince: null });
   }
 
   for (const entry of currentEntries) {

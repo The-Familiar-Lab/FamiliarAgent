@@ -292,3 +292,29 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Optional original tools installed separately by explicit user setup (not bundled engines):
+
+pullboard 0.8.1
+Source: https://github.com/pullboard-dev/pullboard
+Reference commit: 417ba66f39d427c80261c3255ce8ab6771b2eb83
+License: MIT. The original npm installation retains LICENSE and original files.
+FamiliarAgent invokes the public versioned CLI and original UI; no task engine is copied.
+
+docker/skills, manifest 0.3.1
+Source: https://github.com/docker/skills
+Pinned commit: f79172733725e2fd236343ee7b963c446ed85d09
+License: Apache-2.0. The original checkout retains LICENSE and original skill files.
+FamiliarAgent registers references to original skill directories; no Docker runtime is bundled.
+
+@agentclientprotocol/codex-acp 2.1.1
+Source: https://github.com/agentclientprotocol/codex-acp
+License: Apache-2.0.
+
+@agentclientprotocol/claude-agent-acp 0.88.0
+Source: https://github.com/agentclientprotocol/claude-agent-acp
+License: Apache-2.0.
+
+The optional ACP packages are installed under a private user prefix with their original
+licenses and dependency notices. Goose uses their native authentication and ACP transport;
+FamiliarAgent does not copy credentials or embed these adapters in its runtime bundle.

@@ -187,3 +187,37 @@ describe("lazy composition sources", () => {
     );
   });
 });
+
+it("reads registered skill IDs only on the owner, bounded and without native execution", async () => {
+  const skills = {
+    readSkill: vi.fn().mockResolvedValue({ text: "Skill instructions", truncated: true }),
+  };
+  const reader = localResourceReader({
+    serverId: "mac",
+    history: {} as never,
+    paseo: {} as never,
+    skills,
+  });
+  const selected: CompositionResource = {
+    id: "chosen",
+    kind: "skill",
+    format: "path",
+    locator: "review",
+    serverId: "mac",
+    label: "Review",
+    readOnly: true,
+  };
+  expect(await reader(selected, { offset: 0, limit: 1, maxCharacters: 256 })).toEqual({
+    messages: [{ role: "skill", text: "Skill instructions" }],
+    nextOffset: null,
+    truncated: true,
+  });
+  expect(skills.readSkill).toHaveBeenCalledWith({ id: "review", maxCharacters: 256 });
+  await expect(
+    reader({ ...selected, serverId: "other" }, { offset: 0, limit: 1, maxCharacters: 256 }),
+  ).rejects.toThrow("belongs to server");
+  await expect(
+    reader({ ...selected, readOnly: false }, { offset: 0, limit: 1, maxCharacters: 256 }),
+  ).rejects.toThrow("read-only registered ID");
+  expect(skills.readSkill).toHaveBeenCalledTimes(1);
+});

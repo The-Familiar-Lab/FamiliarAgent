@@ -1,5 +1,6 @@
 import type { AgentStreamEvent, AgentTimelineItem } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
 import type {
   PluginHookAgent,
@@ -29,7 +30,11 @@ export const lifecycleEventNames = [
 export const beforeHookNames = ["agent.create", "agent.session_open", "workspace.create"] as const;
 
 const beforeSchemas = {
-  "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true }).strict(),
+  "agent.create": CreateAgentRequestMessageSchema.pick({
+    config: true,
+    env: true,
+    labels: true,
+  }).strict(),
   "agent.session_open": z
     .object({
       agentId: z.string(),
@@ -135,7 +140,14 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
   input: PluginBeforeRequests[Name],
   output: unknown,
 ): PluginBeforeRequests[Name] {
-  const result = validateBeforeRequest(name, output);
+  // Older hooks return only config/env. Omitting metadata preserves the caller's labels.
+  const originalLabels =
+    name === "agent.create" ? beforeSchemas["agent.create"].parse(input).labels : undefined;
+  const normalized =
+    name === "agent.create" && output && typeof output === "object" && !("labels" in output)
+      ? { ...output, labels: originalLabels }
+      : output;
+  const result = validateBeforeRequest(name, normalized);
   if (name === "agent.session_open") {
     const previous = beforeSchemas["agent.session_open"].parse(input);
     const next = beforeSchemas["agent.session_open"].parse(result);
@@ -155,6 +167,9 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
     const next = beforeSchemas["agent.create"].parse(result);
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create hooks cannot change the workspace directory");
+    }
+    if (!isDeepStrictEqual(previous.labels, next.labels)) {
+      throw new Error("agent.create hooks cannot change caller labels");
     }
   }
   return result;

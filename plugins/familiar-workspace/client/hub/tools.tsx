@@ -6,7 +6,8 @@ import { openExternalUrl } from "@getpaseo/plugin/client";
 import { listToolActions } from "../../shared/tool-actions.js";
 import { hostRpc } from "../fleet.js";
 import { registerTool, type ToolEntry } from "../../shared/tool-catalog.js";
-import { ROW, HubTargetPicker, type HubUi } from "./ui.js";
+import { ToolGuide } from "./tool-guide.js";
+import { ROW, HubDisclosure, HubTargetPicker, type HubUi } from "./ui.js";
 import type { HubController, HubProps } from "./controller.js";
 
 function availability(tool: ToolEntry): string {
@@ -35,7 +36,7 @@ function ToolCard({
     void hub.run(() => hub.launch(serverId, tool, action, surface));
   };
   const ask = () => {
-    void hub.run(() => hub.askSetup(serverId, tool));
+    hub.openSetup(serverId, tool.id, "ask");
   };
   const website = () => {
     if (tool.sourceUrl) void hub.run(() => openExternalUrl(tool.sourceUrl!));
@@ -46,46 +47,48 @@ function ToolCard({
       <Text style={ui.toolHeading}>
         {tool.name} · {hub.hostName(serverId)}
       </Text>
-      <Text style={ui.text}>{tool.description}</Text>
+      <ToolGuide tool={tool} ui={ui} />
       <Text style={ui.muted}>
         {tool.capabilities.join(" · ")} · {availability(tool)}
       </Text>
-      <View style={ROW}>
-        {ui.button("Set up / Sign in", () => hub.openSetup(serverId, tool.id))}
-        {hasActions
-          ? ui.button("Run actions", () => {
-              hub.openSetup(serverId, tool.id);
-            })
-          : null}
-        {tool.nativeProvider
-          ? ui.button(
-              "Use in session",
-              () => {
+      <HubDisclosure label="Open, install or configure" ui={ui}>
+        <View style={ROW}>
+          {ui.button("Set up / Sign in", () => hub.openSetup(serverId, tool.id))}
+          {hasActions
+            ? ui.button("Run actions", () => {
                 hub.openSetup(serverId, tool.id);
-              },
-              false,
+              })
+            : null}
+          {tool.nativeProvider
+            ? ui.button(
+                "Use in session",
+                () => {
+                  hub.openSetup(serverId, tool.id);
+                },
+                false,
+              )
+            : null}
+          {tool.modes
+            .filter(
+              (mode): mode is "web" | "desktop" | "terminal" =>
+                mode === "web" || mode === "desktop" || mode === "terminal",
             )
-          : null}
-        {tool.modes
-          .filter(
-            (mode): mode is "web" | "desktop" | "terminal" =>
-              mode === "web" || mode === "desktop" || mode === "terminal",
-          )
-          .map((mode) => (
-            <View key={mode}>
-              {ui.button(
-                modeLabel[mode],
-                () => launch("launch", mode),
-                (mode !== "web" && !tool.installed) || !usableFolder,
-              )}
-            </View>
-          ))}
-        {tool.installAvailable && !tool.installed
-          ? ui.button("Install", () => hub.openSetup(serverId, tool.id))
-          : null}
-        {ui.button("Ask agent to set up", ask, !usableFolder)}
-        {tool.sourceUrl ? ui.button("Project website", website) : null}
-      </View>
+            .map((mode) => (
+              <View key={mode}>
+                {ui.button(
+                  modeLabel[mode],
+                  () => launch("launch", mode),
+                  (mode !== "web" && !tool.installed) || !usableFolder,
+                )}
+              </View>
+            ))}
+          {tool.installAvailable && !tool.installed
+            ? ui.button("Install", () => hub.openSetup(serverId, tool.id))
+            : null}
+          {ui.button("Ask agent to set up", ask)}
+          {tool.sourceUrl ? ui.button("Project website", website) : null}
+        </View>
+      </HubDisclosure>
       {tool.notes.map((note) => (
         <Text key={note} style={ui.muted}>
           {note}
@@ -154,56 +157,61 @@ export function HubTools({
   return (
     <>
       <NativeToolActions hub={hub} ui={ui} flow={flow} />
-      <View style={ui.card}>
-        <Text style={ui.text}>Destination</Text>
-        <HubTargetPicker hub={hub} ui={ui} />
-        {ui.field("Project folder for launch / installation", hub.cwd, hub.setCwd)}
-        <Text style={ui.muted}>
-          Native chats, terminals and web apps open inside FamiliarAgent. Desktop apps open in their
-          own window. Ask agent to set up starts a real setup conversation on the selected server.
-        </Text>
-      </View>
-      {hub.tools
-        .filter(
-          (item) =>
-            (hub.filter === "all" || item.serverId === hub.filter) &&
-            `${item.tool.name} ${item.tool.capabilities.join(" ")}`
-              .toLowerCase()
-              .includes(hub.query.toLowerCase()),
-        )
-        .map(({ serverId, tool }) => (
-          <ToolCard
-            key={`${serverId}:${tool.id}`}
-            hub={hub}
-            ui={ui}
-            serverId={serverId}
-            tool={tool}
-            hasActions={availableActions.has(`${serverId}:${tool.id}`)}
-          />
-        ))}
-      <View style={ui.card}>
-        <Text style={ui.text}>Connect another tool</Text>
-        <Text style={ui.muted}>
-          Enter its name and existing web URL. Advanced also accepts a native command.
-        </Text>
-        <HubTargetPicker hub={hub} ui={ui} />
-        {ui.field("Tool name", hub.customName, hub.setCustomName)}
-        {ui.field("Web URL", hub.customUrl, hub.setCustomUrl)}
-        {ui.button(advanced ? "Hide Advanced" : "Advanced", () => setAdvanced(!advanced))}
-        {advanced ? (
-          <>
-            {ui.field("Executable", hub.customCommand, hub.setCustomCommand)}
-            {ui.field("Arguments as a JSON array", hub.customArgs, hub.setCustomArgs)}
-          </>
-        ) : null}
-        {ui.button(
-          "Connect tool",
-          () => {
-            void hub.run(connect);
-          },
-          !hub.customName || (!hub.customUrl && !hub.customCommand),
-        )}
-      </View>
+      <HubDisclosure label="Tool catalog & original interfaces" ui={ui}>
+        <View style={ui.card}>
+          <Text style={ui.text}>Destination</Text>
+          <HubTargetPicker hub={hub} ui={ui} />
+          {ui.field("Project folder for launch / installation", hub.cwd, hub.setCwd)}
+          <Text style={ui.muted}>
+            Native chats, terminals and web apps open inside FamiliarAgent. Desktop apps open in
+            their own window. Ask agent to set up starts a real setup conversation on the selected
+            server.
+          </Text>
+        </View>
+        {hub.tools
+          .filter(
+            (item) =>
+              (hub.filter === "all" || item.serverId === hub.filter) &&
+              `${item.tool.name} ${item.tool.capabilities.join(" ")}`
+                .toLowerCase()
+                .includes(hub.query.toLowerCase()),
+          )
+          .map(({ serverId, tool }) => (
+            <ToolCard
+              key={`${serverId}:${tool.id}`}
+              hub={hub}
+              ui={ui}
+              serverId={serverId}
+              tool={tool}
+              hasActions={availableActions.has(`${serverId}:${tool.id}`)}
+            />
+          ))}
+      </HubDisclosure>
+      <HubDisclosure label="Advanced · connect another tool" ui={ui}>
+        <View style={ui.card}>
+          <Text style={ui.text}>Connect another tool</Text>
+          <Text style={ui.muted}>
+            Enter its name and existing web URL. Advanced also accepts a native command.
+          </Text>
+          <HubTargetPicker hub={hub} ui={ui} />
+          {ui.field("Tool name", hub.customName, hub.setCustomName)}
+          {ui.field("Web URL", hub.customUrl, hub.setCustomUrl)}
+          {ui.button(advanced ? "Hide Advanced" : "Advanced", () => setAdvanced(!advanced))}
+          {advanced ? (
+            <>
+              {ui.field("Executable", hub.customCommand, hub.setCustomCommand)}
+              {ui.field("Arguments as a JSON array", hub.customArgs, hub.setCustomArgs)}
+            </>
+          ) : null}
+          {ui.button(
+            "Connect tool",
+            () => {
+              void hub.run(connect);
+            },
+            !hub.customName || (!hub.customUrl && !hub.customCommand),
+          )}
+        </View>
+      </HubDisclosure>
     </>
   );
 }

@@ -1,151 +1,207 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { getPaseoClient } from "@getpaseo/plugin/client";
-import { ROW, HubTargetPicker, type HubUi } from "./ui.js";
+import { ROW, HubDisclosure, HubPicker, HubTargetPicker, type HubUi } from "./ui.js";
+import { ToolGuide } from "./tool-guide.js";
 import type { HubController, HubProps } from "./controller.js";
-export function HubWorkspace({
-  hub,
-  ui,
-  forResult = false,
-}: {
+const ACTIONS = { ...ROW, justifyContent: "flex-end" } as const;
+interface Controls {
   hub: HubController;
   ui: HubUi;
-  props: HubProps;
-  forResult?: boolean;
-}) {
-  const {
-    navigation,
-    tab,
-    project,
-    session,
-    target,
-    cwd,
-    setCwd,
-    title,
-    setTitle,
-    tools,
-    toolId,
-    models,
-    modelId,
-    setModelId,
-    thinking,
-    setThinking,
-    run,
-    linkFolder,
-    start,
-  } = hub;
-  const { muted, card, button, field } = ui;
-  const targetPicker = <HubTargetPicker hub={hub} ui={ui} />;
-  return forResult || tab === "Projects" || tab === "Sessions" ? (
-    <View style={card}>
-      <Text style={ui.sectionHeading}>Where to work</Text>
-      {targetPicker}
-      {field("Project folder on selected server", cwd, setCwd)}
-      {field("Project / session name", title, setTitle)}
-      {!forResult ? (
-        <View style={ROW}>
-          {button(
-            project ? "Link folder" : "Create project",
-            () => {
-              void run(linkFolder);
-            },
-            !cwd,
-          )}
-          {project
-            ? button(
-                "Open files",
-                () => {
-                  void run(async () => {
-                    const workspace = await getPaseoClient(target).workspaces.open({ cwd });
-                    navigation?.openWorkspace({ serverId: target, workspaceId: workspace.id });
-                  });
-                },
-                !cwd,
-              )
-            : null}
-        </View>
+}
+
+function NativeModels({ hub, ui }: Controls) {
+  const modelOptions = useMemo(
+    () => hub.models.map((item) => ({ id: item.id, label: item.label })),
+    [hub.models],
+  );
+  const thinkingOptions = useMemo(
+    () => hub.models.find((item) => item.id === hub.modelId)?.thinkingOptions ?? [],
+    [hub.models, hub.modelId],
+  );
+  const selectModel = useCallback(
+    (id: string) => {
+      hub.setModelId(id);
+      hub.setThinking(hub.models.find((item) => item.id === id)?.defaultThinkingOptionId ?? "");
+    },
+    [hub],
+  );
+  return (
+    <>
+      <HubPicker
+        label="Model"
+        value={hub.modelId}
+        options={modelOptions}
+        onChange={selectModel}
+        ui={ui}
+      />
+      {thinkingOptions.length ? (
+        <HubPicker
+          label="Thinking"
+          value={hub.thinking}
+          options={thinkingOptions}
+          onChange={hub.setThinking}
+          ui={ui}
+        />
       ) : null}
-      <Text style={muted}>
-        Link an existing folder on each server. Shared mounts such as JuiceFS can provide the same
-        files without a project copy.
-      </Text>
+    </>
+  );
+}
+function WorkspaceAdvanced({ hub, ui, isFork }: Controls & { isFork: boolean }) {
+  const openFiles = async () => {
+    const workspace = await getPaseoClient(hub.target).workspaces.open({ cwd: hub.cwd });
+    hub.navigation?.openWorkspace({ serverId: hub.target, workspaceId: workspace.id });
+  };
+  return (
+    <HubDisclosure label="Advanced · name, folders & isolation" ui={ui}>
+      {ui.field("Project / session name", hub.title, hub.setTitle)}
       <View style={ROW}>
-        {tools
-          .filter(
-            (item) =>
-              item.serverId === target &&
-              (item.tool.nativeProvider || item.tool.modes.includes("terminal")),
-          )
-          .map(({ tool }) => (
-            <View key={tool.id}>
-              {button(tool.name, () => hub.openSetup(target, tool.id), false, tool.id === toolId)}
-            </View>
-          ))}
+        {ui.button(
+          hub.project ? "Link folder" : "Create project",
+          () => {
+            void hub.run(hub.linkFolder);
+          },
+          !hub.cwd,
+        )}
+        {ui.button(
+          "Open files",
+          () => {
+            void hub.run(openFiles);
+          },
+          !hub.cwd,
+        )}
       </View>
-      {button("All tools", () => hub.setTab("Tools"))}
-      <View style={ROW}>
-        {models.map((model) => (
-          <View key={model.id}>
-            {button(
-              model.label,
-              () => {
-                setModelId(model.id);
-                setThinking(model.defaultThinkingOptionId ?? "");
-              },
-              false,
-              modelId === model.id,
-            )}
-          </View>
-        ))}
-      </View>
-      <View style={ROW}>
-        {models
-          .find((model) => model.id === modelId)
-          ?.thinkingOptions?.map((option) => (
-            <View key={option.id}>
-              {button(option.label, () => setThinking(option.id), false, thinking === option.id)}
-            </View>
-          ))}
-      </View>
-      {session && !forResult ? (
-        <View style={ROW}>
-          {button(
+      {isFork
+        ? ui.button(
             `Separate Git worktree: ${hub.separateWorktree ? "On" : "Off"}`,
             () => hub.setSeparateWorktree(!hub.separateWorktree),
             false,
             hub.separateWorktree,
-          )}
-        </View>
+          )
+        : null}
+      <Text style={ui.muted}>
+        Folder links do not copy files. Fork shares original history references and uses the
+        selected folder. A separate Git worktree starts from the repository default branch;
+        uncommitted files stay in the original folder.
+      </Text>
+    </HubDisclosure>
+  );
+}
+function LaunchForm({
+  hub,
+  ui,
+  forResult,
+  isFork,
+  close,
+}: Controls & { forResult: boolean; isFork: boolean; close: () => void }) {
+  const selected = hub.selectedTool;
+  const options = useMemo(
+    () =>
+      hub.tools
+        .filter(
+          (item) =>
+            item.serverId === hub.target &&
+            (item.tool.nativeProvider || item.tool.modes.includes("terminal")),
+        )
+        .map(({ tool }) => ({
+          id: tool.id,
+          label: `${tool.name}${tool.installed ? "" : " · setup needed"}`,
+        })),
+    [hub.tools, hub.target],
+  );
+  let label = hub.session ? "Switch tool & continue" : "Start session";
+  if (isFork) label = "Fork session here";
+  const launch = () => {
+    if (selected?.nativeProvider) {
+      void hub.run(() => hub.start(isFork));
+      return;
+    }
+    if (selected)
+      void hub.run(() => hub.launch(hub.target, selected, "launch", "terminal", { fork: isFork }));
+  };
+  const ready = selected?.nativeProvider ? !!hub.modelId : !!selected?.installed;
+  return (
+    <>
+      <HubTargetPicker hub={hub} ui={ui} />
+      <HubPicker
+        label="Tool"
+        value={hub.toolId}
+        options={options}
+        onChange={hub.setToolId}
+        ui={ui}
+      />
+      {selected ? <ToolGuide tool={selected} ui={ui} /> : null}
+      {selected
+        ? ui.button(selected.installed ? "Tool settings / Sign in" : "Set up this tool", () =>
+            hub.openSetup(hub.target, selected.id),
+          )
+        : null}
+      {selected?.nativeProvider ? <NativeModels hub={hub} ui={ui} /> : null}
+      {ui.field("Project folder on selected server", hub.cwd, hub.setCwd)}
+      {!forResult ? (
+        <WorkspaceAdvanced hub={hub} ui={ui} isFork={isFork && !!selected?.nativeProvider} />
       ) : null}
       {!forResult ? (
-        <View style={ROW}>
-          {button(
-            session ? "Switch tool & continue" : "Start session",
-            () => {
-              void run(() => start(false));
-            },
-            !cwd || !modelId,
+        <View style={ACTIONS}>
+          {ui.button("Cancel", close)}
+          {ui.button(
+            selected?.nativeProvider || isFork ? label : "Open original tool",
+            launch,
+            !hub.cwd || !ready,
+            true,
           )}
-          {session
-            ? button(
-                "Fork session here",
-                () => {
-                  void run(() => start(true));
-                },
-                !cwd || !modelId,
-              )
-            : null}
         </View>
       ) : null}
-      {session && !forResult ? (
-        <Text style={muted}>
-          Switch keeps logical session {session.id}. Fork creates a branch referring to its parent
-          revision; full history is not copied. Fork uses the selected existing folder unless
-          Separate Git worktree is On. A separate worktree uses the repository default branch
-          selected by the native workspace service and requires Git; use Off for a non-Git folder.
-          Uncommitted changes remain in the original folder. Open files gives access to the
-          workspace and Git tools.
-        </Text>
-      ) : null}
+    </>
+  );
+}
+export function HubWorkspace({
+  hub,
+  ui,
+  forResult = false,
+}: Controls & { props: HubProps; forResult?: boolean }) {
+  const [action, setAction] = useState<"continue" | "fork" | "new" | null>(null);
+  useEffect(() => setAction(null), [hub.session?.id]);
+  const close = useCallback(() => setAction(null), []);
+  if (!forResult && hub.tab !== "Projects" && hub.tab !== "Sessions") return null;
+  const active = hub.session?.endpoints.find((item) => item.id === hub.session?.activeEndpointId);
+
+  let title = hub.project ? "Start in this project" : "Start something new";
+  if (hub.session) title = "Continue your work";
+  return (
+    <View style={ui.card}>
+      <Text style={ui.sectionHeading}>{title}</Text>
+      {forResult || action ? (
+        <LaunchForm
+          hub={hub}
+          ui={ui}
+          forResult={forResult}
+          isFork={action === "fork"}
+          close={close}
+        />
+      ) : (
+        <>
+          <Text style={ui.muted}>
+            {hub.session
+              ? "Continue the same shared session with another tool, or branch it onto another server."
+              : "Choose an existing session, or create a project using an existing folder."}
+          </Text>
+          <View style={ROW}>
+            {active
+              ? ui.button("Open current conversation", () => {
+                  void hub.run(() => hub.openEndpoint(active, hub.session!.id));
+                })
+              : null}
+            {ui.button(
+              hub.session ? "Continue with another tool" : "New session",
+              () => setAction(hub.session ? "continue" : "new"),
+              false,
+              true,
+            )}
+            {hub.session ? ui.button("Fork to another server", () => setAction("fork")) : null}
+          </View>
+        </>
+      )}
     </View>
-  ) : null;
+  );
 }

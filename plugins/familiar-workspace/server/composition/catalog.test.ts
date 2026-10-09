@@ -115,6 +115,17 @@ describe("per-session catalog connection", () => {
     await expect(call("composition.update", { ...update, title: "Renamed" })).rejects.toThrow(
       "memory only",
     );
+    await expect(call("composition.update", { ...update, memoryEnabled: false })).rejects.toThrow(
+      "memory only",
+    );
+    await expect(
+      call("composition.update", { ...update, disabledResourceIds: ["other-context"] }),
+    ).rejects.toThrow("memory only");
+    const advisor = (await call("composition.runtime", {
+      sessionId: session.id,
+      readOnly: true,
+    })) as { mcpServers: { familiar_context: { args: string[] } } };
+    expect(advisor.mcpServers.familiar_context.args).toContain("--read-only");
     await call("composition.update", update);
     expect(source.read(session.id).memory).toBe("Written on Ubuntu");
     await expect(call("composition.update", { ...update, operationId: "stale" })).rejects.toThrow(

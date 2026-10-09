@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   openTerminal: vi.fn(),
   listModels: vi.fn(),
   refreshAgent: vi.fn(),
+  send: vi.fn(),
   clientHost: vi.fn(),
   connectSources: vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined),
 }));
@@ -30,7 +31,7 @@ vi.mock("@getpaseo/plugin/client", () => ({
       providers: { listModels: mocks.listModels },
       agents: {
         create: mocks.createAgent,
-        ref: () => ({ refresh: mocks.refreshAgent }),
+        ref: (id: string) => ({ id, refresh: mocks.refreshAgent, send: mocks.send }),
       },
       workspaces: { open: mocks.openWorkspace },
       terminals: { create: mocks.createTerminal },
@@ -113,7 +114,9 @@ beforeEach(() => {
   });
   mocks.openWorkspace.mockResolvedValue({ id: "workspace" });
   mocks.createTerminal.mockResolvedValue({ id: "terminal" });
+  mocks.send.mockResolvedValue(undefined);
   mocks.createAgent.mockResolvedValue({
+    send: mocks.send,
     id: "new-agent",
     cwd: "/worktrees/fork",
   });
@@ -122,6 +125,8 @@ beforeEach(() => {
       switch (contract.name) {
         case "composition.list":
           return { projects: [], sessions: [], total: 0 };
+        case "tools.setup.workspace":
+          return { cwd: "/server-owned/setup" };
         case "tools.list":
           return [{ ...tool, id: "codex", name: "Codex", nativeProvider: "codex" }];
         case "resources.list":
@@ -283,7 +288,18 @@ describe("Familiar Hub action wiring", () => {
       params: { agentId: "native-remote" },
     };
     const { result, rerender } = renderHook(() => useHubController(remoteProps));
-    await waitFor(() => expect(result.current.session?.id).toBe("session"));
+    await waitFor(() => expect(result.current.entryChoice?.kind).toBe("native"));
+    expect(result.current.session).toBeNull();
+    expect(calls("composition.create")).toHaveLength(0);
+    await act(async () =>
+      result.current.attachNative(
+        "linux",
+        mocks.refreshAgent.mock.results[0]
+          ? (await mocks.refreshAgent.mock.results[0].value).agent
+          : null,
+      ),
+    );
+    expect(result.current.session?.id).toBe("session");
     expect(result.current.host).toEqual({ id: "mac", label: "Mac" });
     expect(result.current.target).toBe("linux");
     expect(calls("composition.list").every(([serverId]) => serverId === "mac")).toBe(true);
@@ -675,4 +691,256 @@ it("keeps ordinary navigation usable when browser storage is blocked", async () 
   } finally {
     blocked.mockRestore();
   }
+});
+
+it("honors the explicit source server from a right panel without linking until confirmation", async () => {
+  const { result } = renderHook(() =>
+    useHubController({
+      ...props,
+      params: { agentId: "native-remote", serverId: "linux", toolId: "goose", setup: "1" },
+    }),
+  );
+  await waitFor(() => expect(result.current.setupTarget?.toolId).toBe("goose"));
+  expect(result.current.entryChoice).toMatchObject({
+    kind: "native",
+    serverId: "linux",
+    agent: { id: "native-remote" },
+  });
+  expect(result.current.target).toBe("linux");
+  expect(result.current.session).toBeNull();
+  expect(calls("composition.create")).toHaveLength(0);
+  expect(mocks.createAgent).not.toHaveBeenCalled();
+});
+it("requests setup from the explicitly selected existing agent without creating another agent or steering it", async () => {
+  const { result } = renderHook(() => useHubController(props));
+  await act(async () => result.current.askSetup("linux", tool, { agentId: "chosen-agent" }));
+  expect(mocks.clientHost).toHaveBeenCalledWith("linux");
+  expect(mocks.createAgent).not.toHaveBeenCalled();
+  expect(mocks.send).toHaveBeenCalledWith(expect.stringContaining("/remote/project"), {
+    activeTurnBehavior: "reject",
+  });
+  expect(mocks.openAgent).toHaveBeenCalledWith({ serverId: "linux", agentId: "chosen-agent" });
+});
+it("rejects unavailable setup accounts clearly and does not dispatch a fallback provider", async () => {
+  const { result } = renderHook(() => useHubController(props));
+  await waitFor(() => expect(result.current.tools.length).toBeGreaterThan(0));
+  mocks.listModels.mockClear();
+  await expect(
+    result.current.askSetup("linux", tool, { provider: "unavailable", cwd: "/remote/project" }),
+  ).rejects.toThrow("Sign in");
+  expect(mocks.listModels).not.toHaveBeenCalled();
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("does not restore an unrelated setup bookmark over a new tool panel", async () => {
+  saveSetupReturn("mac", {
+    projectId: project.id,
+    sessionId: "old",
+    target: "mac",
+    toolId: "codex",
+    cwd: "/old",
+    title: "Old",
+    tab: "Sessions",
+  });
+  const { result } = renderHook(() =>
+    useHubController({
+      ...props,
+      params: { serverId: "linux", toolId: "goose", cwd: "/new", setup: "1" },
+    }),
+  );
+  await waitFor(() => expect(result.current.setupTarget?.toolId).toBe("goose"));
+  expect(result.current.cwd).toBe("/new");
+  expect(result.current.target).toBe("linux");
+  expect(calls("composition.read")).toHaveLength(0);
+});
+
+it("forks the logical context before opening an original terminal tool instead of silently continuing the parent", async () => {
+  const { result } = renderHook(() => useHubController(props));
+  await act(async () => {
+    result.current.setProject(project);
+    result.current.setSession(session);
+    result.current.setCwd("/project");
+  });
+  await act(async () =>
+    result.current.launch(
+      "mac",
+      { ...tool, id: "goose", nativeProvider: undefined, modes: ["terminal"] },
+      "launch",
+      "terminal",
+      { fork: true },
+    ),
+  );
+  expect(calls("composition.fork")).toHaveLength(1);
+  expect(calls("tools.context")[0]?.[2].sessionId).toBe("fork");
+  expect(calls("tools.prepare")[0]?.[2].sessionId).toBe("fork");
+  expect(calls("composition.bind")[0]?.[2]).toMatchObject({
+    id: "fork",
+    endpoint: { kind: "terminal", agentId: "terminal" },
+  });
+  expect(mocks.createAgent).not.toHaveBeenCalled();
+});
+
+it("sends one batch setup input from validated server catalog entries and rejects unknown IDs before dispatch", async () => {
+  const original = mocks.rpc.getMockImplementation()!;
+  mocks.rpc.mockImplementation((server, contract, input) =>
+    contract.name === "tools.list"
+      ? [
+          tool,
+          {
+            ...tool,
+            id: "agents",
+            name: "Agent skills",
+            sourceUrl: "https://example.com/original",
+          },
+        ]
+      : original(server, contract, input),
+  );
+  const { result } = renderHook(() => useHubController(props));
+  await waitFor(() => expect(result.current.tools).toHaveLength(4));
+  await act(async () =>
+    result.current.askSetup("linux", tool, { agentId: "setup-agent", tools: ["goose", "agents"] }),
+  );
+  expect(mocks.send).toHaveBeenCalledTimes(1);
+  expect(mocks.send.mock.calls[0]?.[0]).toContain("1. Goose");
+  expect(mocks.send.mock.calls[0]?.[0]).toContain("2. Agent skills");
+  expect(mocks.send.mock.calls[0]?.[0]).toContain("https://example.com/original");
+  expect(mocks.send.mock.calls[0]?.[0]).toContain("Never copy credentials between servers");
+  expect(mocks.send.mock.calls[0]?.[1]).toEqual({ activeTurnBehavior: "reject" });
+  await expect(
+    result.current.askSetup("linux", tool, { agentId: "setup-agent", tools: ["missing"] }),
+  ).rejects.toThrow("not in this server's catalog");
+  await expect(
+    result.current.askSetup("linux", tool, { agentId: "setup-agent", tools: ["goose", "goose"] }),
+  ).rejects.toThrow("unique");
+  expect(mocks.send).toHaveBeenCalledTimes(1);
+});
+it("keeps a requested tool through deliberate linking of the current native conversation", async () => {
+  const { result } = renderHook(() =>
+    useHubController({
+      ...props,
+      params: { agentId: "native-remote", serverId: "linux", toolId: "goose", setup: "1" },
+    }),
+  );
+  await waitFor(() => expect(result.current.entryChoice?.kind).toBe("native"));
+  act(() => result.current.useSetupTool("linux", "goose"));
+  expect(result.current.tab).toBe("Sessions");
+  expect(calls("composition.create")).toHaveLength(0);
+  const choice = result.current.entryChoice;
+  if (choice?.kind !== "native") throw new Error("Missing current native conversation");
+  await act(async () => result.current.attachNative(choice.serverId, choice.agent));
+  expect(calls("composition.create")[0]?.[2]).toMatchObject({
+    endpoint: { serverId: "linux", agentId: "native-remote" },
+  });
+  expect(result.current.session?.id).toBe("session");
+  expect(result.current.toolId).toBe("goose");
+  expect(result.current.tab).toBe("Tools");
+  expect(result.current.cwd).toBe("/remote/project");
+  expect(mocks.createAgent).not.toHaveBeenCalled();
+});
+it("does not restore an old panel destination after its linked-session read loses a selection race", async () => {
+  let finish!: (value: CompositionSession) => void;
+  const original = mocks.rpc.getMockImplementation()!;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "composition.list")
+      return {
+        projects: [],
+        total: 1,
+        sessions: [
+          {
+            ...session,
+            endpoints: [
+              {
+                id: "endpoint",
+                serverId: "linux",
+                agentId: "native-remote",
+                provider: "codex",
+                cwd: "/old",
+              },
+            ],
+          },
+        ],
+      };
+    if (contract.name === "composition.read" && input.id === "session")
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    return original(server, contract, input);
+  });
+  const { result } = renderHook(() =>
+    useHubController({
+      ...props,
+      params: { agentId: "native-remote", serverId: "linux", toolId: "goose", setup: "1" },
+    }),
+  );
+  await waitFor(() => expect(calls("composition.read")).toHaveLength(1));
+  act(() => {
+    result.current.setTarget("mac");
+    result.current.setCwd("/new");
+    result.current.setToolId("aider");
+  });
+  await act(async () => finish(session));
+  expect(result.current.target).toBe("mac");
+  expect(result.current.cwd).toBe("/new");
+  expect(result.current.toolId).toBe("aider");
+  expect(result.current.setupTarget).toBeNull();
+  expect(result.current.session).toBeNull();
+});
+
+it("uses the server-owned setup folder for a new setup agent without a project path", async () => {
+  const { result } = renderHook(() => useHubController(props));
+  await waitFor(() => expect(result.current.tools.length).toBeGreaterThan(0));
+  await act(async () =>
+    result.current.askSetup("linux", tool, { provider: "codex", cwd: "", tools: ["codex"] }),
+  );
+  expect(calls("tools.setup.workspace")[0]?.[0]).toBe("linux");
+  expect(mocks.createAgent).toHaveBeenCalledWith(
+    expect.objectContaining({ cwd: "/server-owned/setup" }),
+  );
+  expect(mocks.send).toHaveBeenCalledTimes(1);
+  expect(mocks.send.mock.calls[0]?.[0]).toContain(
+    "Prepare tools only; do not initialize Pullboard",
+  );
+  expect(mocks.send.mock.calls[0]?.[0]).toContain("folder mapping later");
+  expect(mocks.send.mock.calls[0]?.[0]).not.toContain("Project: /server-owned/setup");
+});
+it("publishes a healthy host's tools while another catalog stalls, and retries only the failed owner", async () => {
+  const original = mocks.rpc.getMockImplementation()!;
+  let complete!: (tools: ToolEntry[]) => void;
+  let slow = true;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "tools.list" && server === "mac" && slow)
+      return new Promise((resolve) => {
+        complete = resolve;
+      });
+    return original(server, contract, input);
+  });
+  const { result } = renderHook(() => useHubController(props));
+  await waitFor(() =>
+    expect(result.current.tools.some((item) => item.serverId === "linux")).toBe(true),
+  );
+  expect(result.current.tools.some((item) => item.serverId === "mac")).toBe(false);
+  expect(result.current.loadingToolServers).toContain("mac");
+  expect(result.current.busy).toBe(false);
+  slow = false;
+  await act(() => result.current.reloadTools("mac"));
+  expect(result.current.tools.some((item) => item.serverId === "mac")).toBe(true);
+  await act(async () => complete([{ ...tool, id: "obsolete" }]));
+  expect(result.current.tools.some((item) => item.tool.id === "obsolete")).toBe(false);
+  expect(result.current.loadingToolServers).not.toContain("mac");
+});
+it("clears a catalog failure after explicit refresh without setting global busy", async () => {
+  const original = mocks.rpc.getMockImplementation()!;
+  let failed = true;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "tools.list" && server === "mac" && failed)
+      return Promise.reject(new Error("Temporary failure"));
+    return original(server, contract, input);
+  });
+  const { result } = renderHook(() => useHubController(props));
+  await waitFor(() => expect(result.current.toolCatalogErrors.mac).toBe("Temporary failure"));
+  expect(result.current.tools.some((item) => item.serverId === "linux")).toBe(true);
+  failed = false;
+  await act(() => result.current.reloadTools());
+  expect(result.current.toolCatalogErrors.mac).toBe("");
+  expect(result.current.tools.some((item) => item.serverId === "mac")).toBe(true);
+  expect(result.current.busy).toBe(false);
 });

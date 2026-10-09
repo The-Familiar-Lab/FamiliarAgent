@@ -6,15 +6,22 @@ import { z } from "zod";
 import { addDaemonHostOption, withGlobalOptions } from "../../utils/command-options.js";
 import { connectToDaemon } from "../../utils/client.js";
 import type { DaemonTarget } from "../../utils/daemon-target.js";
+import { registerSkillsMcp } from "./skills.js";
 
 type Invoke = (method: string, input: Record<string, unknown>) => Promise<unknown>;
 const sessionId = z.string().min(1).max(160).optional();
 const record = z.record(z.string(), z.unknown());
 
 /** Uses the same daemon contracts as the app. No separate memory or model loop lives in MCP. */
-export function createCompositionMcp(invoke: Invoke, defaultSessionId?: string): McpServer {
+export function createCompositionMcp(
+  invoke: Invoke,
+  defaultSessionId?: string,
+  options: { readOnly?: boolean } = {},
+): McpServer {
   const server = new McpServer({ name: "familiar-context", version: "1.0.0" });
   const resolveSession = (supplied?: string) => {
+    if (options.readOnly && supplied && defaultSessionId && supplied !== defaultSessionId)
+      throw new Error("This advisor connection is scoped to its original session.");
     const id = supplied ?? defaultSessionId;
     if (!id)
       throw new Error("Choose a logical session ID, or launch this MCP server with --session");
@@ -74,6 +81,33 @@ export function createCompositionMcp(invoke: Invoke, defaultSessionId?: string):
       }),
   );
   server.registerTool(
+    "familiar_skill",
+    {
+      title: "Read a skill selected for this session",
+      description:
+        "Read bounded SKILL.md instructions from a selected skill reference returned by familiar_context. The original registered folder remains on its owner server; this does not install dependencies or execute scripts. Unchecked references cannot be read through this session.",
+      inputSchema: {
+        sessionId,
+        resourceId: z.string().min(1).max(160),
+        maxCharacters: z.number().int().min(256).max(65536).default(16384),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    ({ sessionId: suppliedId, resourceId, maxCharacters }) =>
+      execute(async () => {
+        const resource = record.parse(
+          await invoke("composition.resource.locate", {
+            id: resolveSession(suppliedId),
+            resourceId,
+          }),
+        );
+        if (resource.kind !== "skill")
+          throw new Error("Choose a selected skill reference from familiar_context.");
+        return invoke("composition.source.read", { resource, offset: 0, limit: 1, maxCharacters });
+      }),
+  );
+  if (options.readOnly) return server;
+  server.registerTool(
     "familiar_memory",
     {
       title: "Update shared session decisions",
@@ -100,6 +134,7 @@ export function createCompositionMcp(invoke: Invoke, defaultSessionId?: string):
         });
       }),
   );
+  registerSkillsMcp(server, invoke, execute);
   return server;
 }
 
@@ -111,38 +146,42 @@ export function createContextCommand(): Command {
     context
       .command("mcp")
       .description("Serve FamiliarAgent context over MCP stdio")
-      .option("--session <id>", "Default logical session ID"),
+      .option("--session <id>", "Default logical session ID")
+      .option("--read-only", "Expose only shared context, history and selected-skill reads"),
   ).action(
-    withGlobalOptions(async (options: { daemonTarget: DaemonTarget; session?: string }) => {
-      const client = await connectToDaemon({ target: options.daemonTarget });
-      const server = createCompositionMcp(
-        (method, input) => client.invokePluginRpc("familiar-workspace", method, input),
-        options.session,
-      );
-      try {
-        await server.connect(new StdioServerTransport());
-        await new Promise<void>((resolve) => {
-          let closed = false;
-          const finish = () => {
-            if (closed) return;
-            closed = true;
-            process.stdin.off("end", finish);
-            process.off("SIGINT", finish);
-            process.off("SIGTERM", finish);
-            resolve();
-          };
-          // The MCP SDK exposes a callback property, not an EventTarget.
-          // oxlint-disable-next-line unicorn/prefer-add-event-listener
-          server.server.onclose = finish;
-          process.stdin.once("end", finish);
-          process.once("SIGINT", finish);
-          process.once("SIGTERM", finish);
-        });
-      } finally {
-        await server.close();
-        await client.close();
-      }
-    }),
+    withGlobalOptions(
+      async (options: { daemonTarget: DaemonTarget; session?: string; readOnly?: boolean }) => {
+        const client = await connectToDaemon({ target: options.daemonTarget });
+        const server = createCompositionMcp(
+          (method, input) => client.invokePluginRpc("familiar-workspace", method, input),
+          options.session,
+          { readOnly: options.readOnly },
+        );
+        try {
+          await server.connect(new StdioServerTransport());
+          await new Promise<void>((resolve) => {
+            let closed = false;
+            const finish = () => {
+              if (closed) return;
+              closed = true;
+              process.stdin.off("end", finish);
+              process.off("SIGINT", finish);
+              process.off("SIGTERM", finish);
+              resolve();
+            };
+            // The MCP SDK exposes a callback property, not an EventTarget.
+            // oxlint-disable-next-line unicorn/prefer-add-event-listener
+            server.server.onclose = finish;
+            process.stdin.once("end", finish);
+            process.once("SIGINT", finish);
+            process.once("SIGTERM", finish);
+          });
+        } finally {
+          await server.close();
+          await client.close();
+        }
+      },
+    ),
   );
   return context;
 }

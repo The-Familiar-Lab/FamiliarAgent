@@ -6,6 +6,7 @@ import type {
   StartDaemonIfEnabledInput,
 } from "@/runtime/daemon-start-service";
 import type { Href } from "expo-router";
+import { buildPluginSurfaceRoute } from "@/plugins/routes";
 import {
   buildHostRootRoute,
   buildHostWorkspaceRoute,
@@ -157,6 +158,12 @@ export function resolveHostIndexRoute(input: {
   workspaceSelection: ActiveWorkspaceSelection | null;
   workspaceSelectionStatus: WorkspaceSelectionStatus;
 }): Href {
+  if (input.workspaceSelection === null) {
+    return buildPluginSurfaceRoute(input.serverId, "familiar-workspace", {
+      kind: "surface",
+      id: "main",
+    });
+  }
   if (
     input.workspaceSelection?.serverId === input.serverId &&
     shouldRestoreWorkspaceSelection(input)

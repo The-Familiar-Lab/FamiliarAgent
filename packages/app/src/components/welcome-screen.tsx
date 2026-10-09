@@ -20,7 +20,6 @@ import { PairLinkModal } from "./pair-link-modal";
 import { Button } from "@/components/ui/button";
 import { resolveAppVersion } from "@/utils/app-version";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
-import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isFdroidBuild } from "@/constants/build-profile";
@@ -181,11 +180,11 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
 
   useEffect(() => {
     if (!anyOnlineServerId) return;
-    router.replace(buildOpenProjectRoute());
+    router.replace("/");
   }, [anyOnlineServerId, router]);
 
   const finishOnboarding = useCallback(() => {
-    router.replace(buildOpenProjectRoute());
+    router.replace("/");
   }, [router]);
 
   const handleOpenPaseoSite = useCallback(() => {

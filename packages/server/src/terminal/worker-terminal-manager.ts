@@ -1,3 +1,4 @@
+import { TerminalExitCache } from "./terminal-exit-cache.js";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -153,6 +154,7 @@ export function createWorkerTerminalManager(
   const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const pendingRequests = new Map<string, PendingRequest>();
+  const recentExits = new TerminalExitCache();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
@@ -234,7 +236,7 @@ export function createWorkerTerminalManager(
       state: input.state,
       activity: input.info.activity,
       replayPreamble: "",
-      exitInfo: null,
+      exitInfo: recentExits.get(input.info.id) ?? null,
       messageListeners: new Set(),
       exitListeners: new Set(),
       commandFinishedListeners: new Set(),
@@ -392,6 +394,9 @@ export function createWorkerTerminalManager(
     };
 
     record.session = session;
+    // The worker can emit exit before the create request resolves. A late
+    // creation reply must not resurrect that dead process in the active list.
+    if (record.exitInfo) return session;
     recordsById.set(record.info.id, record);
     const terminalIds = terminalIdsByCwd.get(record.info.cwd) ?? new Set<string>();
     terminalIds.add(record.info.id);
@@ -442,6 +447,7 @@ export function createWorkerTerminalManager(
       return;
     }
     record.exitInfo = message.info;
+    recentExits.set(message.terminalId, message.info);
     for (const listener of Array.from(record.exitListeners)) {
       listener(message.info);
     }
@@ -683,6 +689,7 @@ export function createWorkerTerminalManager(
       options: WorkerCreateTerminalOptions & { workspaceId: string },
     ): Promise<TerminalSession> {
       const terminalId = options.id ?? randomUUID();
+      recentExits.delete(terminalId);
       const activityToken = createActivityToken();
       const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
       terminalActivityTokenById.set(terminalId, activityToken);
@@ -730,6 +737,7 @@ export function createWorkerTerminalManager(
       return expected === token ? "valid" : "invalid";
     },
 
+    getTerminalExitInfo: (id: string) => recentExits.get(id),
     getTerminal(id: string): TerminalSession | undefined {
       return recordsById.get(id)?.session;
     },

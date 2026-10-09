@@ -1,6 +1,12 @@
 import type { IntegratedInstallRecipe } from "./setup-install.js";
 
 const sources = {
+  "docker-skills": {
+    version: "0.3.1-f791727",
+    repository: "docker/skills",
+    commit: "f79172733725e2fd236343ee7b963c446ed85d09",
+    verify: ["skills.sh.json", ".claude-plugin/plugin.json", "LICENSE"],
+  },
   agents: {
     version: "1.7.1",
     repository: "wshobson/agents",
@@ -155,4 +161,5 @@ export const INTEGRATED_SETUP_IDS = [
   "alethe",
   "orca",
   "openharness",
+  "docker-skills",
 ];

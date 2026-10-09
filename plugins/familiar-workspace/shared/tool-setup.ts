@@ -1,6 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-import { localPath, toolId, toolPlan } from "./tool-catalog.js";
+import { localPath, sharedSkill, toolId, toolPlan } from "./tool-catalog.js";
 
 export const setupAction = z.enum([
   "install",
@@ -9,6 +9,9 @@ export const setupAction = z.enum([
   "start",
   "api-key",
   "apply-key",
+  "use-codex",
+  "use-claude",
+  "use-goose-profile",
 ]);
 export const apiKeyProvider = z.enum(["openai", "anthropic", "openrouter"]);
 export const toolSetupStatus = z.object({
@@ -21,6 +24,11 @@ export const toolSetupStatus = z.object({
   actions: z.array(z.object({ id: setupAction, label: z.string() })),
 });
 export type ToolSetupStatus = z.infer<typeof toolSetupStatus>;
+export const readSetupWorkspace = defineRpc({
+  name: "tools.setup.workspace",
+  input: z.object({}).strict(),
+  output: z.object({ cwd: localPath }),
+});
 export const readToolSetup = defineRpc({
   name: "tools.setup.status",
   input: z.object({ id: toolId }).strict(),
@@ -37,5 +45,6 @@ export const prepareToolSetup = defineRpc({
       .array(z.object({ action: z.string(), parameters: z.record(z.string(), z.string()) }))
       .optional(),
     credentialFile: localPath.optional(),
+    skills: z.array(sharedSkill).max(256).optional(),
   }),
 });
