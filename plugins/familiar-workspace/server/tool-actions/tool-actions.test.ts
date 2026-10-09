@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "node:http";
@@ -240,6 +242,47 @@ describe("bounded native transports", () => {
   });
 });
 
+async function nativeProcessIsRunning(pid: number): Promise<boolean> {
+  try {
+    process.kill(pid, 0);
+    if (process.platform !== "linux") return true;
+    // A container's init/subreaper may retain a killed orphan as a zombie.
+    // kill(pid, 0) sees its PID, although that process can no longer execute.
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
+    return state !== "Z" && state !== "X";
+  } catch (error) {
+    if (["ESRCH", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+    throw error;
+  }
+}
+
+it.skipIf(process.platform !== "linux")(
+  "distinguishes a running process from a terminated child awaiting its parent to reap it",
+  async () => {
+    const parent = spawn(
+      "python3",
+      [
+        "-c",
+        "import os,sys\npid=os.fork()\nif pid==0: os._exit(0)\nprint(pid,flush=True)\ntry: sys.stdin.readline()\nfinally: os.waitpid(pid,0)\n",
+      ],
+      { stdio: ["pipe", "pipe", "ignore"], timeout: 5000 },
+    );
+    const closed = once(parent, "close");
+    try {
+      expect(await nativeProcessIsRunning(parent.pid!)).toBe(true);
+      const [output] = await once(parent.stdout, "data");
+      const childPid = Number(output.toString());
+      expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
+      await vi.waitFor(async () => expect(await nativeProcessIsRunning(childPid)).toBe(false));
+      expect(() => process.kill(childPid, 0)).not.toThrow();
+    } finally {
+      parent.stdin.end();
+      await closed;
+    }
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "kills same-group descendants even when their parent exits before the grace deadline",
   async () => {
@@ -255,8 +298,7 @@ it.skipIf(process.platform === "win32")(
           "-e",
           `
     const {spawn}=require('node:child_process');
-    const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});
-    require('node:fs').writeFileSync(${JSON.stringify(file)},String(child.pid));
+    spawn(process.execPath,['-e',${JSON.stringify(`process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(file)},String(process.pid));setInterval(()=>{},1000);`)}],{stdio:'ignore'});
     setInterval(()=>{},1000);
   `,
         ],
@@ -274,15 +316,11 @@ it.skipIf(process.platform === "win32")(
         }
       }
       expect(pid).toBeDefined();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await nativeProcessIsRunning(pid!)).toBe(true);
       controller.abort();
       expect(String(await task)).toContain("cancelled");
       for (let attempt = 0; attempt < 50; attempt++) {
-        try {
-          process.kill(pid!, 0);
-        } catch {
-          return;
-        }
+        if (!(await nativeProcessIsRunning(pid!))) return;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       throw new Error("Owned native grandchild survived cancellation");
