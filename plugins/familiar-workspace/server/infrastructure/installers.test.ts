@@ -38,18 +38,8 @@ async function fixture() {
   return {
     root,
     spec,
-    run: (legacyPathApi = false) =>
-      exec(
-        "python3",
-        [
-          "-c",
-          (legacyPathApi
-            ? "import pathlib\nif hasattr(pathlib.PurePath, 'is_relative_to'): delattr(pathlib.PurePath, 'is_relative_to')\n"
-            : "") + INFRASTRUCTURE_INSTALLER,
-          JSON.stringify(spec),
-        ],
-        { timeout: 10000 },
-      ),
+    run: () =>
+      exec("python3", ["-c", INFRASTRUCTURE_INSTALLER, JSON.stringify(spec)], { timeout: 10000 }),
   };
 }
 it("installs verified regular members and preserves idempotent canonical executable paths", async () => {
@@ -61,10 +51,16 @@ it("installs verified regular members and preserves idempotent canonical executa
   await f.run();
   expect(await readlink(binary)).toBe(target);
 });
-it("supports legacy pathlib while preserving links outside its owned directory", async () => {
+it("uses Python 3.8-compatible path checks and preserves links outside its owned directory", async () => {
+  // Check our API usage without removing methods used internally by newer pathlib versions.
+  await exec("python3", [
+    "-c",
+    "import ast,sys; tree=ast.parse(sys.argv[1]); assert not any(isinstance(node,ast.Attribute) and node.attr == 'is_relative_to' for node in ast.walk(tree)), 'is_relative_to requires Python 3.9'",
+    INFRASTRUCTURE_INSTALLER,
+  ]);
   const f = await fixture();
-  await f.run(true);
-  await f.run(true);
+  await f.run();
+  await f.run();
   const entry = path.join(f.root, "tools/bin/native");
   expect((await exec(entry)).stdout).toBe("NATIVE_EXEC_OK");
   const external = path.join(f.root, "tools/native/native-other/original");
@@ -72,7 +68,7 @@ it("supports legacy pathlib while preserving links outside its owned directory",
   await writeFile(external, "original");
   await rm(entry);
   await symlink(external, entry);
-  await expect(f.run(true)).rejects.toThrow("not owned");
+  await expect(f.run()).rejects.toThrow("not owned");
   expect(await readlink(entry)).toBe(external);
   expect(await readFile(external, "utf8")).toBe("original");
 });
