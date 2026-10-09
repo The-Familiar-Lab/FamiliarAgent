@@ -67,7 +67,10 @@ export async function prepareCodegRuntime(options: {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
   try {
-    await writeFile(tokenFile, randomBytes(32).toString("hex") + "\n", { flag: "wx", mode: 0o600 });
+    await writeFile(tokenFile, randomBytes(32).toString("hex") + "\n", {
+      flag: "wx",
+      mode: 0o600,
+    });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
@@ -113,12 +116,17 @@ export async function prepareCodegRuntime(options: {
   };
 }
 
-export async function prepareOrcaCli(node: string, entry: string, wrapper: string) {
+export async function prepareOrcaCli(
+  node: string,
+  entry: string,
+  wrapper: string,
+  profile?: string,
+) {
   await privateProfile(dirname(wrapper));
   const launch = nodeToolCommand(node, [entry], "darwin");
   await writeFile(
     wrapper,
-    `#!/bin/sh\nexec ${[launch.command, ...launch.args].map(shellQuote).join(" ")} "$@"\n`,
+    `#!/bin/sh\n${profile ? `export ORCA_USER_DATA_PATH=${shellQuote(profile)}\n` : ""}exec ${[launch.command, ...launch.args].map(shellQuote).join(" ")} "$@"\n`,
     {
       mode: 0o700,
     },

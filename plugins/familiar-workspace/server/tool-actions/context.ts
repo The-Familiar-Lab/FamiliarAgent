@@ -44,6 +44,9 @@ export function nativeActionContext(root: string, catalog: ToolCatalog) {
         ...(toolId === "goose" ? await gooseProviderEnvironment(root) : {}),
         ...gooseContextReadEnvironment(goose.args),
         FAMILIAR_SESSION_ID: sessionId,
+        ...(toolId === "claude-squad" && executables.claude
+          ? { FAMILIAR_CLAUDE_EXECUTABLE: executables.claude }
+          : {}),
         PATH: [bin, searchPath, ...(toolId === "goose" ? gooseAdapterBins(root) : [])].join(
           path.delimiter,
         ),

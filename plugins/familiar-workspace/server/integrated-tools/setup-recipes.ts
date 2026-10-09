@@ -1,4 +1,5 @@
 import type { IntegratedInstallRecipe } from "./setup-install.js";
+import { ORCA_SLOT_INSTALL } from "./orca-runtime.js";
 
 const sources = {
   "docker-skills": {
@@ -98,11 +99,19 @@ export function integratedRecipe(
         id,
         version: `${source.version}-node24.21.0`,
         repository: `https://github.com/${source.repository}.git`,
-        runtime: { url: `https://nodejs.org/dist/v24.21.0/${directory}.tar.gz`, sha256, directory },
+        runtime: {
+          url: `https://nodejs.org/dist/v24.21.0/${directory}.tar.gz`,
+          sha256,
+          directory,
+        },
         verify: [...source.verify, `.familiar-runtime/${directory}/bin/node`],
       };
     }
-    return { ...source, id, repository: `https://github.com/${source.repository}.git` };
+    return {
+      ...source,
+      id,
+      repository: `https://github.com/${source.repository}.git`,
+    };
   }
   const target = `${platform}-${arch}`;
   if (id === "codeg" && codegDigests[target]) {
@@ -125,6 +134,32 @@ export function integratedRecipe(
       sha256: asset.digest,
       format: asset.format,
       verify: [asset.executable],
+    };
+  }
+  if (id === "orca" && target === "linux-x64") {
+    const runtime = `node-v24.21.0-${target}`;
+    return {
+      id,
+      version: "1.4.223",
+      url: "https://github.com/stablyai/orca/releases/download/v1.4.223/orca-ide_1.4.223_amd64.deb",
+      sha256: "e5c33bb26a5b9563b80c1c7fec5b5aaffcebe59c8fc1cd5bcdc91020dea569b2",
+      format: "deb",
+      runtime: {
+        url: `https://nodejs.org/dist/v24.21.0/${runtime}.tar.gz`,
+        sha256: nodeDigests[target]!,
+        directory: runtime,
+      },
+      commands: [
+        {
+          command: "$NODE",
+          args: ["-e", ORCA_SLOT_INSTALL, "opt/Orca/resources", "linux-x64-glibc"],
+        },
+      ],
+      verify: [
+        "opt/Orca/resources/app.asar.unpacked/out/cli/index.js",
+        "familiar-orcad/slot/orcad.js",
+        "familiar-orcad/slot/.version",
+      ],
     };
   }
   if (id === "orca" && platform === "darwin" && ["arm64", "x64"].includes(arch)) {

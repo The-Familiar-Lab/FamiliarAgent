@@ -12,7 +12,7 @@ export interface BuiltinTool {
   nativeProvider?: string;
   desktopApp?: string;
   desktopOpensFolder?: boolean;
-  install?: { kind: "npm" | "python" | "native"; package: string };
+  install?: { kind: "npm" | "python" | "native"; package: string; with?: string[] };
   notes?: string[];
 }
 
@@ -79,6 +79,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     sourceUrl: "https://cursor.com/docs",
     license: "Proprietary runtime",
     command: "cursor-agent",
+    install: { kind: "native", package: "cursor" },
     desktopApp: "Cursor.app",
     notes: ["Editor chat state stays in Cursor. CLI and editor sessions are not interchangeable."],
   },
@@ -91,6 +92,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     license: "Proprietary runtime",
     command: "agy",
     nativeProvider: "antigravity",
+    install: { kind: "native", package: "antigravity" },
     desktopApp: "Antigravity.app",
     notes: [
       "The current CLI provider and historical IDE transcripts use different native session formats.",
@@ -197,7 +199,11 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     license: "Apache-2.0",
     command: "superharness",
     args: ["dashboard-ui"],
-    install: { kind: "python", package: "superharness" },
+    install: {
+      kind: "python",
+      package: "superharness",
+      with: ["claude-agent-sdk==0.2.165"],
+    },
     notes: [
       "Initialize the project with superharness init before using its tasks. The native dashboard owns its loop state.",
     ],

@@ -1,4 +1,3 @@
-import { realpath } from "node:fs/promises";
 import path from "node:path";
 import type {
   ToolActionAdapter,
@@ -13,7 +12,7 @@ async function verifySdk(
   context: ToolActionContext,
 ): Promise<void> {
   // Upstream's SDK-less fallback drops the prompt. Fail before dispatch instead.
-  const script = await readBounded(await realpath(executable));
+  const script = await readBounded(executable, context.signal);
   const interpreter = /^#!(\/[^\r\n]+)\r?\n/u.exec(script)?.[1];
   if (!interpreter || interpreter.includes(" "))
     throw new Error(

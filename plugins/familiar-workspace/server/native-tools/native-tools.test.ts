@@ -37,6 +37,7 @@ beforeEach(async () => {
   exec.mockReset().mockResolvedValue({ stdout: "native result", stderr: "", exitCode: 0 });
 });
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -353,26 +354,28 @@ describe("native tools", () => {
     );
     exec.mockImplementation(async (command: ToolCommand) => {
       let stdout = "output";
-      if (command.args[0] === "display-message") stdout = `%4\tclaude\t0\t${worktree}`;
-      else if (command.args[0] === "capture-pane")
+      if (command.args[1] === "display-message") stdout = `%4\tclaude\t0\t${worktree}`;
+      else if (command.args[1] === "capture-pane")
         stdout = "● reply\n────────\n❯ \n────────\n  auto mode on";
       return { stdout, stderr: "", exitCode: 0 };
     });
     return { ...request, nativeId: "claudesquad_owned", parameters: { stateFile } };
   }
-  it("only reads and sends to an original Squad instance within the selected repository", async () => {
+  it("uses UTF-8 tmux output under the C locale and stays within the selected Squad repository", async () => {
+    vi.stubEnv("LC_ALL", "C");
     const owned = await squadFixture();
     expect(await squadAdapter.execute({ ...owned, action: "send" }, context)).toMatchObject({
       state: "submitted",
       nativeId: owned.nativeId,
     });
-    expect(exec.mock.calls.map(([command]) => command.args[0])).toEqual([
+    expect(exec.mock.calls.map(([command]) => command.args[1])).toEqual([
       "display-message",
       "capture-pane",
       "load-buffer",
       "paste-buffer",
       "send-keys",
     ]);
+    expect(exec.mock.calls.every(([command]) => command.args[0] === "-u")).toBe(true);
     expect(exec.mock.calls[3]![0].args).toContain("-p");
     exec.mockClear();
     await expect(
@@ -386,5 +389,69 @@ describe("native tools", () => {
       squadAdapter.execute({ ...owned, action: "send", input: "hello\u001b[2J" }, context),
     ).rejects.toThrow("control characters");
     expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  async function versionedSquadFixture() {
+    const owned = await squadFixture();
+    const versioned = path.join(root, "2.1.295");
+    const executable = path.join(root, "claude");
+    await writeFile(versioned, "native fixture");
+    await symlink(versioned, executable);
+    const original = exec.getMockImplementation()!;
+    exec.mockImplementation(async (command) => {
+      if (command.command === "ps") {
+        expect(command.args).toEqual(["-p", "1234", "-o", "comm="]);
+        return { stdout: executable + "\n", stderr: "", exitCode: 0 };
+      }
+      const result = await original(command);
+      if (command.args[1] === "display-message")
+        result.stdout = result.stdout.replace("\tclaude\t", "\t2.1.295\t") + "\t1234";
+      return result;
+    });
+    return { owned, executable, versioned };
+  }
+
+  it("verifies the exact original executable for a version-named Claude process", async () => {
+    const { owned, executable } = await versionedSquadFixture();
+    context.nativeContext = vi.fn().mockResolvedValue({
+      args: [],
+      env: { FAMILIAR_CLAUDE_EXECUTABLE: executable },
+    });
+    expect(await squadAdapter.execute({ ...owned, action: "send" }, context)).toMatchObject({
+      state: "submitted",
+    });
+    expect(context.nativeContext).toHaveBeenCalledWith("claude-squad");
+    expect(exec.mock.calls.some(([command]) => command.args[1] === "paste-buffer")).toBe(true);
+  });
+
+  it("supports direct native execution without a Familiar context shim", async () => {
+    const { owned, executable } = await versionedSquadFixture();
+    context.resolveCommand = async (command) => (command === "claude" ? executable : command);
+    expect(await squadAdapter.execute({ ...owned, action: "send" }, context)).toMatchObject({
+      state: "submitted",
+    });
+  });
+
+  it("rejects a lookalike version-named process that is not the configured Claude binary", async () => {
+    const { owned } = await versionedSquadFixture();
+    const other = path.join(root, "different-native-file");
+    await writeFile(other, "other process");
+    context.nativeContext = vi.fn().mockResolvedValue({
+      args: [],
+      env: { FAMILIAR_CLAUDE_EXECUTABLE: other },
+    });
+    await expect(squadAdapter.execute({ ...owned, action: "send" }, context)).rejects.toThrow(
+      "verified Claude composer",
+    );
+    expect(exec.mock.calls.some(([command]) => command.args[1] === "load-buffer")).toBe(false);
+  });
+
+  it("reports unreadable tmux metadata without accepting a different workspace", async () => {
+    const owned = await squadFixture();
+    exec.mockResolvedValue({ stdout: "%4\tclaude\t0\t\t1234", stderr: "", exitCode: 0 });
+    await expect(squadAdapter.execute({ ...owned, action: "read" }, context)).rejects.toThrow(
+      "cannot read this pane's working directory",
+    );
+    expect(exec).toHaveBeenCalledOnce();
   });
 });

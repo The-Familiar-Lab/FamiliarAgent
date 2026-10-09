@@ -1,5 +1,19 @@
 # Changelog
 
+## FamiliarAgent 0.16.2 — 2026-10-09
+
+- Isolated automatic project-icon discovery in bounded child processes, so an inaccessible folder cannot exhaust the daemon’s filesystem workers and stall tool/session reads.
+- Added official, checksum-verified native installation plans for Firetower, Skulk, bssh, Coder and JuiceFS, preserving supported OS roles and user-scoped locations.
+- Added Cursor and Antigravity CLI installation and native account checks. Installed desktop apps are distinguished from an available CLI.
+- Fixed Node-based installation plans launched by the packaged Electron helper, and reject installer success without an executable.
+- Included the original Claude Agent SDK dependency in superharness setup. Added Linux Orca daemon packaging from verified original release files and native build prerequisite diagnostics for Hydra.
+- Added cancellable, bounded native artifact reads and path resolution so inaccessible original files fail with recovery guidance instead of leaving a task running indefinitely.
+- Kept original tmux output in UTF-8 when a GUI-launched daemon has no UTF-8 locale.
+- Fixed Claude Squad input detection when native Claude reports its version as its foreground process name; the selected executable is verified before sending.
+- Added explicit SSH configuration selection for bssh, retaining the user’s existing SSH settings.
+
+See the [tool verification report](docs/tool-verification.md) for real native workflow checks, account prerequisites and OS-specific limits. Installation does not imply a ready account or a configured external service.
+
 ## FamiliarAgent 0.13.0 — 2026-10-08
 
 - Added **Use result…** beside completed native responses. Select a destination and instruction to connect a verified source response to another native agent in the same logical session.

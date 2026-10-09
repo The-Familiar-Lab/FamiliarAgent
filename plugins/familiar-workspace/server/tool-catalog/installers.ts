@@ -1,5 +1,7 @@
 import path from "node:path";
+import os from "node:os";
 import type { ToolPlan } from "../../shared/tool-catalog.js";
+import { nodeToolCommand } from "../integrated-tools/setup-node.js";
 
 /** Execute the original pinned installer only after verifying the audited bytes.
  * Arguments are data, never interpolated into this program. */
@@ -9,7 +11,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
 (async () => {
-  const [url, sha256, root, bash, encodedEnv] = process.argv.slice(1);
+  const [url, sha256, root, bash, encodedEnv, expectedBinary] = process.argv.slice(1);
   const parent = path.join(root, 'installers');
   await fs.mkdir(parent, {recursive:true, mode:0o700});
   const temporary = await fs.mkdtemp(path.join(parent, 'native-'));
@@ -26,7 +28,10 @@ const {spawn} = require('node:child_process');
       child.once('error', reject);
       child.once('exit', (code, signal) => signal ? reject(new Error('Installer ended with ' + signal)) : resolve(code ?? 1));
     });
-    process.exitCode = code;
+    if (code !== 0) { process.exitCode = code; return; }
+    const installed = await fs.stat(expectedBinary).catch(() => null);
+    if (!installed?.isFile()) throw new Error('Native installer exited without creating its executable. Check the original installer output.');
+    await fs.access(expectedBinary, require('node:fs').constants.X_OK);
   } finally { await fs.rm(temporary, {recursive:true, force:true}); }
 })().catch(error => {console.error(error.message); process.exitCode=1;});
 `;
@@ -38,6 +43,7 @@ const RECIPES = {
     env: { GOOSE_VERSION: "v1.54.0", CONFIGURE: "false" },
     required: ["bash", "curl", "tar", "bzip2"] as string[],
     binVariable: "GOOSE_BIN_DIR",
+    binary: "goose",
   },
   "claude-squad": {
     url: "https://raw.githubusercontent.com/smtg-ai/claude-squad/ce1ffb4392b01f38e2c4599c7c84d2a93973b138/install.sh",
@@ -45,6 +51,21 @@ const RECIPES = {
     env: { VERSION: "1.0.20" },
     required: ["bash", "curl", "tar", "tmux", "gh"] as string[],
     binVariable: "BIN_DIR",
+    binary: "cs",
+  },
+  cursor: {
+    url: "https://cursor.com/install",
+    sha256: "dd6677f33cb7efa34809557b1c6df3a11e389b76ce4e56ce5751db13dd7260e6",
+    env: {},
+    required: ["bash", "curl", "tar"] as string[],
+    binary: "cursor-agent",
+  },
+  antigravity: {
+    url: "https://antigravity.google/cli/install.sh",
+    sha256: "62966c07365423bd4dc209355060744058fb30d60f5323e2d360e39de64e5042",
+    env: {},
+    required: ["bash", "curl", "tar"] as string[],
+    binary: "agy",
   },
 } as const;
 
@@ -62,16 +83,21 @@ export async function prepareNativeInstaller(options: {
   const bash = await options.executable("bash");
   const env = {
     ...recipe.env,
-    [recipe.binVariable]: path.join(options.root, "tools", "bin"),
+    ...("binVariable" in recipe
+      ? { [recipe.binVariable]: path.join(options.root, "tools", "bin") }
+      : {}),
     PATH: options.searchPath,
   };
+  const executable =
+    "binVariable" in recipe
+      ? path.join(options.root, "tools", "bin", recipe.binary)
+      : path.join(os.homedir(), ".local", "bin", recipe.binary);
   return {
     toolId: options.id,
     action: "install",
     mode: "terminal",
     cwd: options.cwd,
-    command: process.execPath,
-    args: [
+    ...nodeToolCommand(process.execPath, [
       "-e",
       INSTALL_DRIVER,
       recipe.url,
@@ -79,9 +105,13 @@ export async function prepareNativeInstaller(options: {
       options.root,
       bash!,
       JSON.stringify(env),
-    ],
+      executable,
+    ]),
     notes: [
-      "Runs the original version-pinned installer after SHA-256 verification, in FamiliarAgent's private tools folder. Existing native installations and login credentials remain in place.",
+      "Runs the reviewed original installer after SHA-256 verification and checks that its executable exists. Login remains in the original tool.",
+      "binVariable" in recipe
+        ? "Installs into FamiliarAgent's private tools folder."
+        : "The vendor installer uses its original user-scoped CLI folders and update path. It does not copy an account from another server.",
     ],
   };
 }

@@ -151,7 +151,8 @@ describe("native tool catalog", () => {
     const entries = await tools.list();
     for (const [id, app] of Object.entries(apps)) {
       expect(entries.find((item) => item.id === id)).toMatchObject({
-        installed: true,
+        installed:
+          id === "codex" ? Boolean(entries.find((item) => item.id === id)?.executablePath) : true,
         modes: expect.arrayContaining(["desktop"]),
       });
       const plan = await tools.prepare({ id, action: "launch", surface: "desktop", cwd: project });
@@ -168,6 +169,46 @@ describe("native tool catalog", () => {
         installed: false,
         modes: ["reference"],
       });
+  });
+  it("keeps desktop opening available without treating an app folder as its missing agent CLI", async () => {
+    const tools = new ToolCatalog(root, {
+      home: root,
+      env: { PATH: path.join(root, "bin") },
+      platform: "darwin",
+    });
+    for (const [id, app] of [
+      ["codex", "ChatGPT.app"],
+      ["cursor", "Cursor.app"],
+      ["antigravity", "Antigravity.app"],
+    ]) {
+      await mkdir(path.join(root, "Applications", app!), { recursive: true });
+      const command = path.join(root, "missing", id!);
+      const entry = await tools.register({
+        id: id!,
+        name: id!,
+        capabilities: [],
+        description: "",
+        launch: { command, args: [] },
+      });
+      expect(entry).toMatchObject({
+        installed: false,
+        executablePath: undefined,
+        modes: expect.arrayContaining(["desktop", "terminal"]),
+      });
+      expect(
+        (await tools.prepare({ id: id!, action: "launch", surface: "desktop", cwd: project }))
+          .command,
+      ).toBe("/usr/bin/open");
+      await expect(
+        tools.prepare({ id: id!, action: "launch", surface: "terminal", cwd: project }),
+      ).rejects.toThrow("not installed");
+      await mkdir(path.dirname(command), { recursive: true });
+      await writeFile(command, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+      expect((await tools.list()).find((item) => item.id === id)).toMatchObject({
+        installed: true,
+        executablePath: command,
+      });
+    }
   });
   it("detects installed executables without spawning them and does not claim reference-only integrations", async () => {
     const aider = await binary("aider");
@@ -262,6 +303,23 @@ describe("native tool catalog", () => {
       "16 KiB",
     );
     expect(await readFile(second.path, "utf8")).toBe("Updated shared context");
+  });
+  it("installs the declared native Python SDK dependency through uv and the private bootstrap fallback", async () => {
+    const uv = await binary("uv");
+    const plan = await catalog().prepare({ id: "superharness", cwd: project, action: "install" });
+    expect(plan.args).toContain(uv);
+    expect(plan.args.slice(-2)).toEqual(["--with", "claude-agent-sdk==0.2.165"]);
+    await rm(uv);
+    await binary("pipx");
+    await binary("python3");
+    const fallback = await catalog().prepare({
+      id: "superharness",
+      cwd: project,
+      action: "install",
+    });
+    expect(fallback.command).toBe("/bin/sh");
+    expect(fallback.args.slice(-2)).toEqual(["--with", "claude-agent-sdk==0.2.165"]);
+    expect(fallback.args[1]).toContain('shift 7; exec "$FAMILIAR_INSTALL_UV"');
   });
   it("persists URL registrations, keeps URL reachability unclaimed and removes overrides", async () => {
     const entry = await catalog().register({
@@ -464,7 +522,8 @@ describe("shared resources", () => {
     ).rejects.toThrow("bzip2");
     await binary("bzip2");
     const plan = await catalog().prepare({ id: "goose", action: "install", cwd: project });
-    expect(plan.command).toBe(process.execPath);
+    expect(plan.command).toBe("/usr/bin/env");
+    expect(plan.args.slice(0, 2)).toEqual(["ELECTRON_RUN_AS_NODE=1", process.execPath]);
     expect(plan.args.some((arg) => arg.includes("9560429ff982bbfecec5094963e5f34696b63a1c"))).toBe(
       true,
     );

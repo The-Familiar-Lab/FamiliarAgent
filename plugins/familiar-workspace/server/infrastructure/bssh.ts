@@ -5,6 +5,12 @@ import { binaryParameter, cli, inputText, parameter } from "./common.js";
 const common = [
   binaryParameter,
   {
+    key: "sshConfig",
+    label: "SSH configuration file (optional)",
+    description:
+      "Absolute path to an existing OpenSSH configuration. The original file is preserved; otherwise uses this server's usual SSH configuration.",
+  },
+  {
     key: "hosts",
     label: "SSH hosts",
     required: true,
@@ -15,7 +21,14 @@ const common = [
 
 /** bssh rejects underscore aliases and misses some Include-based SSH profiles.
  * OpenSSH expands the user's existing profile; bssh still owns every connection. */
-async function resolvedHosts(hosts: string[], context: ToolActionContext, binary: string) {
+async function resolvedHosts(
+  hosts: string[],
+  context: ToolActionContext,
+  binary: string,
+  config: string,
+) {
+  if (config && (!path.isAbsolute(config) || !(await stat(config)).isFile()))
+    throw new Error("SSH configuration must be an absolute regular file path");
   const ssh = await context.resolveCommand("ssh");
   const algorithms = new Map<string, Set<string>>();
   for (const [key, query] of [
@@ -41,7 +54,13 @@ async function resolvedHosts(hosts: string[], context: ToolActionContext, binary
     const match = /^(.*?)(?::([0-9]+))?$/u.exec(host)!;
     const result = await context.exec({
       command: ssh,
-      args: ["-G", ...(match[2] ? ["-p", match[2]] : []), "--", match[1]!],
+      args: [
+        ...(config ? ["-F", config] : []),
+        "-G",
+        ...(match[2] ? ["-p", match[2]] : []),
+        "--",
+        match[1]!,
+      ],
       timeoutMs: 5_000,
       maxBytes: 128 * 1024,
     });
@@ -117,7 +136,12 @@ export const bsshAdapter: ToolActionAdapter = {
     )
       throw new Error("Choose at most 32 explicit SSH hosts");
     const binary = await context.resolveCommand(parameter(request, "binary", false) || "bssh");
-    const resolved = await resolvedHosts(hosts, context, binary);
+    const resolved = await resolvedHosts(
+      hosts,
+      context,
+      binary,
+      parameter(request, "sshConfig", false),
+    );
     const args = [
       "--batch",
       "-o",

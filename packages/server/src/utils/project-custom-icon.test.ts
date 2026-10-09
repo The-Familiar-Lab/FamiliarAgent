@@ -128,6 +128,24 @@ describe("project custom icon", () => {
     await expect(target.readAdvertised()).resolves.toEqual(advertised.icon);
   });
 
+  it("does not reuse another root's advertised icon when a project folder changes", async () => {
+    const rootPath = await tempDir("paseo-icon-original-");
+    const nextRoot = await tempDir("paseo-icon-next-");
+    const paseoHome = await tempDir("paseo-icon-home-");
+    await writeFile(join(rootPath, "favicon.png"), PNG_1X1);
+    const record = createPersistedProjectRecord({
+      projectId: "same-project",
+      rootPath,
+      kind: "non_git",
+      displayName: "project",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    const reader = new ProjectIconReader(paseoHome);
+    expect((await reader.snapshot(record)).icon).toEqual(PNG_1X1_ICON);
+    await expect(reader.read({ ...record, rootPath: nextRoot })).resolves.toBeNull();
+  });
+
   it("drops the stored image when the project goes back to automatic", async () => {
     const target = await project();
     await target.set({ type: "upload", data: PNG_1X1.toString("base64") });

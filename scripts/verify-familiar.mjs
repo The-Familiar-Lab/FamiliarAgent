@@ -59,6 +59,9 @@ if (active.has("server"))
   tests.push(
     "packages/server/src/server/file-download/token-store.test.ts",
     "packages/server/src/server/project-root-watch-worker.test.ts",
+    "packages/server/src/utils/project-icon-discovery.test.ts",
+    "packages/server/src/utils/project-custom-icon.test.ts",
+    "packages/server/src/utils/project-icon.test.ts",
     "packages/server/src/server/workspace-reconciliation-service.test.ts",
     "packages/server/src/server/workspace-reconciliation-observation.test.ts",
     "packages/server/src/server/agent/providers/claude/agent.initialization.test.ts",
@@ -163,6 +166,7 @@ if (options.has("--integration"))
     "packages/server/src/server/daemon-e2e/file-download.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/terminal-launch.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-workspace.e2e.test.ts",
+    "packages/server/src/server/daemon-e2e/project-icon-isolation.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-advisor.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-fork.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-composition.e2e.test.ts",

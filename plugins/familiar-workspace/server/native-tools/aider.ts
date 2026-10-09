@@ -78,7 +78,11 @@ export const aiderAdapter: ToolActionAdapter = {
       const filename = nativeId(request);
       if (!path.isAbsolute(filename) || !filename.endsWith(".md"))
         throw new Error("Select an absolute Aider Markdown history path");
-      return { state: "completed", text: await readBounded(filename), nativeId: filename };
+      return {
+        state: "completed",
+        text: await readBounded(filename, context.signal),
+        nativeId: filename,
+      };
     }
     if (request.action !== "run") throw new Error("Unsupported Aider action");
     const envFile = request.parameters.envFile
@@ -113,7 +117,7 @@ export const aiderAdapter: ToolActionAdapter = {
     });
     return {
       state: "completed",
-      text: aiderReply(await readBounded(history), request.input),
+      text: aiderReply(await readBounded(history, context.signal), request.input),
       nativeId: history,
       artifacts: [{ path: history, label: "Aider chat history" }],
     };

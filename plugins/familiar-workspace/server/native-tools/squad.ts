@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
-import { realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { ToolActionAdapter, ToolActionRequest } from "../tool-actions/contracts.js";
+import type {
+  ToolActionAdapter,
+  ToolActionContext,
+  ToolActionRequest,
+} from "../tool-actions/contracts.js";
 import { inputFile, nativeId, objectJson, readBounded, runNative } from "./common.js";
+import { realpathsBounded } from "./native-files.js";
 
 interface SquadInstance {
   title: string;
@@ -11,6 +15,31 @@ interface SquadInstance {
   program: string;
   worktree: { repo_path: string; worktree_path: string };
   nativeId: string;
+}
+
+/** Native Claude installs may expose a version as the foreground process name.
+ * Only accept that name after resolving the pane process to the selected binary. */
+async function isClaudeProcess(
+  pane: string[],
+  cwd: string,
+  context: ToolActionContext,
+): Promise<boolean> {
+  if (pane[1] === "claude") return true;
+  if (!/^[1-9]\d*$/u.test(pane[4] ?? "")) return false;
+  const shared = await context.nativeContext?.("claude-squad");
+  const expected =
+    shared?.env.FAMILIAR_CLAUDE_EXECUTABLE ?? (await context.resolveCommand("claude"));
+  if (!path.isAbsolute(expected)) return false;
+  const processCommand = (
+    await runNative(context, {
+      command: "ps",
+      args: ["-p", pane[4]!, "-o", "comm="],
+      cwd,
+    })
+  ).trim();
+  if (!path.isAbsolute(processCommand) || /[\r\n]/u.test(processCommand)) return false;
+  const [actual, selected] = await realpathsBounded([processCommand, expected], context.signal);
+  return actual !== null && actual === selected;
 }
 export function isClaudeComposerIdle(capture: string): boolean {
   const lines = capture.trimEnd().split(/\r?\n/u).slice(-12);
@@ -31,15 +60,17 @@ export function isClaudeComposerIdle(capture: string): boolean {
     !following.some((line) => /(?:confirm|proceed|cancel|Esc to|Press Enter)/iu.test(line))
   );
 }
-async function instances(request: ToolActionRequest): Promise<SquadInstance[]> {
+async function instances(
+  request: ToolActionRequest,
+  context: ToolActionContext,
+): Promise<SquadInstance[]> {
   const filename =
     request.parameters.stateFile || path.join(os.homedir(), ".claude-squad", "state.json");
   if (!path.isAbsolute(filename)) throw new Error("Claude Squad state file must be absolute");
-  const value = objectJson(await readBounded(filename));
+  const value = objectJson(await readBounded(filename, context.signal));
   if (!Array.isArray(value.instances)) throw new Error("Invalid original Claude Squad state");
-  const cwd = await realpath(request.cwd);
-  const result: SquadInstance[] = [];
-  for (const row of value.instances) {
+  const rows = value.instances;
+  for (const row of rows) {
     if (
       !row ||
       typeof row.title !== "string" ||
@@ -49,15 +80,21 @@ async function instances(request: ToolActionRequest): Promise<SquadInstance[]> {
       typeof row.worktree?.worktree_path !== "string"
     )
       throw new Error("Unsupported Claude Squad instance format");
-    let belongs = false;
-    for (const candidate of [row.path, row.worktree.repo_path, row.worktree.worktree_path]) {
-      try {
-        if ((await realpath(candidate)) === cwd) belongs = true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
-    }
-    if (belongs)
+  }
+  const [cwd, ...candidates] = await realpathsBounded(
+    [
+      request.cwd,
+      ...rows.flatMap((row) => [row.path, row.worktree.repo_path, row.worktree.worktree_path]),
+    ],
+    context.signal,
+  );
+  if (!cwd)
+    throw Object.assign(new Error("The original Squad project folder is missing"), {
+      code: "ENOENT",
+    });
+  const result: SquadInstance[] = [];
+  for (const [index, row] of rows.entries()) {
+    if (candidates.slice(index * 3, index * 3 + 3).includes(cwd))
       result.push({
         ...row,
         nativeId: `claudesquad_${row.title.replaceAll(/\s/gu, "").replaceAll(".", "_")}`,
@@ -104,7 +141,7 @@ export const squadAdapter: ToolActionAdapter = {
     }),
   ),
   async execute(request, context) {
-    const rows = await instances(request);
+    const rows = await instances(request, context);
     if (request.action === "list")
       return {
         state: "completed",
@@ -126,25 +163,32 @@ export const squadAdapter: ToolActionAdapter = {
     const matches = rows.filter((row) => row.nativeId === id);
     if (matches.length !== 1)
       throw new Error("Select a unique original Claude Squad instance in this repository");
+    // GUI-launched daemons can lack a UTF-8 locale; tmux otherwise replaces tabs with underscores.
     const pane = (
       await runNative(context, {
         command: "tmux",
         args: [
+          "-u",
           "display-message",
           "-p",
           "-t",
           `=${id}:0.0`,
-          "#{pane_id}\t#{pane_current_command}\t#{pane_dead}\t#{pane_current_path}",
+          "#{pane_id}\t#{pane_current_command}\t#{pane_dead}\t#{pane_current_path}\t#{pane_pid}",
         ],
         cwd: request.cwd,
       })
     )
       .trim()
       .split("\t");
-    if (
-      !/^%\d+$/u.test(pane[0] ?? "") ||
-      (await realpath(pane[3] ?? "")) !== (await realpath(matches[0]!.worktree.worktree_path))
-    )
+    if (!/^%\d+$/u.test(pane[0] ?? ""))
+      throw new Error("Native tmux did not return a valid pane identity");
+    if (!pane[3] || !path.isAbsolute(pane[3]))
+      throw new Error("Native tmux cannot read this pane's working directory on this server");
+    const [actualFolder, selectedFolder] = await realpathsBounded(
+      [pane[3], matches[0]!.worktree.worktree_path],
+      context.signal,
+    );
+    if (!actualFolder || actualFolder !== selectedFolder)
       throw new Error("The original Squad pane is missing or no longer belongs to its worktree");
     const target = pane[0]!;
     if (request.action === "read")
@@ -152,18 +196,18 @@ export const squadAdapter: ToolActionAdapter = {
         state: "completed",
         text: await runNative(context, {
           command: "tmux",
-          args: ["capture-pane", "-p", "-J", "-S", "-200", "-t", target],
+          args: ["-u", "capture-pane", "-p", "-J", "-S", "-200", "-t", target],
           cwd: request.cwd,
         }),
         nativeId: id,
       };
-    if (pane[2] !== "0" || pane[1] !== "claude")
+    if (pane[2] !== "0" || !(await isClaudeProcess(pane, request.cwd, context)))
       throw new Error(
         "Automatic Squad input currently requires a verified Claude composer. Open its original terminal for other agents.",
       );
     const capture = await runNative(context, {
       command: "tmux",
-      args: ["capture-pane", "-p", "-J", "-t", target],
+      args: ["-u", "capture-pane", "-p", "-J", "-t", target],
       cwd: request.cwd,
     });
     if (!isClaudeComposerIdle(capture))
@@ -180,17 +224,17 @@ export const squadAdapter: ToolActionAdapter = {
     const buffer = `familiar-${createHash("sha256").update(context.runDirectory).digest("hex").slice(0, 24)}`;
     await runNative(context, {
       command: "tmux",
-      args: ["load-buffer", "-b", buffer, await inputFile(context, request.input)],
+      args: ["-u", "load-buffer", "-b", buffer, await inputFile(context, request.input)],
       cwd: request.cwd,
     });
     await runNative(context, {
       command: "tmux",
-      args: ["paste-buffer", "-p", "-d", "-b", buffer, "-t", target],
+      args: ["-u", "paste-buffer", "-p", "-d", "-b", buffer, "-t", target],
       cwd: request.cwd,
     });
     await runNative(context, {
       command: "tmux",
-      args: ["send-keys", "-t", target, "Enter"],
+      args: ["-u", "send-keys", "-t", target, "Enter"],
       cwd: request.cwd,
     });
     return {

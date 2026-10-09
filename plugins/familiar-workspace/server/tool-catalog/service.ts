@@ -17,6 +17,7 @@ import {
 import { BUILTIN_TOOLS, type BuiltinTool } from "./catalog.js";
 import { directory, readJson, writeJson, writeText } from "./files.js";
 import { prepareNativeInstaller } from "./installers.js";
+import { prepareInfrastructureInstaller } from "../infrastructure/installers.js";
 import { integratedInstallation } from "../integrated-tools/setup.js";
 import { gooseAdapterBins, gooseProviderEnvironment } from "./goose-provider.js";
 
@@ -139,6 +140,14 @@ export class ToolCatalog {
     ];
   }
   private async installPlan(tool: BuiltinTool, cwd: string): Promise<ToolPlan> {
+    const infrastructure = await prepareInfrastructureInstaller({
+      id: tool.id,
+      root: this.root,
+      cwd,
+      platform: this.platform,
+      executable: (name) => this.findExecutable(name),
+    });
+    if (infrastructure) return infrastructure;
     if (!tool.install)
       throw new Error(
         "No verified automatic installer is configured. Open the source instructions or add a custom launch command.",
@@ -163,6 +172,7 @@ export class ToolCatalog {
     } else if (recipe.kind === "python") {
       const uv = await this.findExecutable("uv");
       const pipx = await this.findExecutable("pipx");
+      const dependencies = (recipe.with ?? []).flatMap((dependency) => ["--with", dependency]);
       command = "/usr/bin/env";
       if (uv)
         args = [
@@ -177,8 +187,9 @@ export class ToolCatalog {
           "--python",
           "3.12",
           recipe.package,
+          ...dependencies,
         ];
-      else if (pipx)
+      else if (pipx && !dependencies.length)
         args = [
           `PIPX_HOME=${path.join(this.root, "tools", "python")}`,
           `PIPX_BIN_DIR=${path.join(this.root, "tools", "bin")}`,
@@ -192,7 +203,7 @@ export class ToolCatalog {
         command = "/bin/sh";
         args = [
           "-c",
-          'set -eu; if [ ! -x "$2/bin/python" ]; then "$1" -m venv "$2"; fi; if [ ! -x "$2/bin/uv" ]; then "$2/bin/python" -m pip install --disable-pip-version-check "uv==0.12.24"; fi; export UV_TOOL_DIR="$3" UV_TOOL_BIN_DIR="$4" UV_PYTHON_INSTALL_DIR="$6" UV_CACHE_DIR="$7" PATH="$4:$PATH"; exec "$2/bin/uv" tool install --python 3.12 "$5"',
+          'set -eu; if [ ! -x "$2/bin/python" ]; then "$1" -m venv "$2"; fi; if [ ! -x "$2/bin/uv" ]; then "$2/bin/python" -m pip install --disable-pip-version-check "uv==0.12.24"; fi; export UV_TOOL_DIR="$3" UV_TOOL_BIN_DIR="$4" UV_PYTHON_INSTALL_DIR="$6" UV_CACHE_DIR="$7" PATH="$4:$PATH"; FAMILIAR_INSTALL_UV="$2/bin/uv"; FAMILIAR_INSTALL_PACKAGE="$5"; shift 7; exec "$FAMILIAR_INSTALL_UV" tool install --python 3.12 "$FAMILIAR_INSTALL_PACKAGE" "$@"',
           "familiar-python-install",
           python,
           path.join(this.root, "tools", "python-bootstrap"),
@@ -201,16 +212,17 @@ export class ToolCatalog {
           recipe.package,
           path.join(this.root, "tools", "python-runtimes"),
           path.join(this.root, "cache", "uv"),
+          ...dependencies,
         ];
         notes.push(
           "Bootstraps pinned uv in a private Python environment and installs a compatible Python 3.12 tool environment; system Python packages are not modified.",
         );
       }
     } else {
-      if (tool.id !== "goose" && tool.id !== "claude-squad")
+      if (!["goose", "claude-squad", "cursor", "antigravity"].includes(tool.id))
         throw new Error("Unknown native installer");
       return prepareNativeInstaller({
-        id: tool.id,
+        id: tool.id as Parameters<typeof prepareNativeInstaller>[0]["id"],
         root: this.root,
         cwd,
         searchPath: this.binDirectories().join(path.delimiter),
@@ -241,7 +253,7 @@ export class ToolCatalog {
       ...describeTool(tool),
       modes,
       custom: Boolean(custom),
-      installed: Boolean(executablePath || desktopApp || canonicalInstall),
+      installed: Boolean(executablePath || canonicalInstall || (!command && desktopApp)),
       executablePath,
       url: custom?.url,
       installAvailable: !installReason,

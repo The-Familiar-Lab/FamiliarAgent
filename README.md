@@ -4,8 +4,9 @@ FamiliarAgent connects existing agent tools, conversations and project folders a
 
 The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, terminals, editor, file explorer, Git worktrees, browser panels and plugin system. FamiliarAgent adds the integration layer; it is a separate project and is not an official Paseo release.
 
-**Current source version: 0.16.1.** Adds direct project drag-to-split layouts, signed-in account selection and configurable setup agents. Includes guided account-first tool setup, selectable installation agents, reusable Codex/Claude connections for Goose, project/server conversation browsing, in-session skill management, and reliable native terminal launch diagnostics. Start with the [setup and composition guide](docs/setup-and-composition.md); original tool actions and their native prerequisites are documented in the [native actions guide](docs/native-tool-actions.md).
+**Current source version: 0.16.2.** Adds verified native installers for infrastructure tools, Cursor and Antigravity CLI setup, Linux Orca runtime support, and fixes for Electron installation recipes, superharness dependencies and Claude Squad input detection. Includes direct project dragging, guided account-first setup, configurable setup agents and reusable Codex/Claude connections for Goose. Start with the [setup and composition guide](docs/setup-and-composition.md); original tool actions and their native prerequisites are documented in the [native actions guide](docs/native-tool-actions.md).
 
+- [Tool-by-tool installation and verification scope](docs/tool-verification.md)
 - [Using Familiar Hub](docs/familiar-hub.md)
 - [Native tool actions, result connections and verified scope](docs/native-tool-actions.md)
 - [Development, verification and source history](docs/familiar-development.md)

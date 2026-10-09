@@ -23,12 +23,22 @@ const context = {
   resolveCommand: vi.fn(async (value: string) => value),
   exec: vi.fn(async () => ({ stdout: "v24.22.0\n", stderr: "", exitCode: 0 })),
 };
-const options = (id: string) => ({ id, root, cwd: root, platform: "darwin", arch: "arm64" });
+const options = (id: string) => ({
+  id,
+  root,
+  cwd: root,
+  platform: "darwin",
+  arch: "arm64",
+});
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "familiar-setup-test-"));
   vi.clearAllMocks();
-  context.exec.mockResolvedValue({ stdout: "v24.22.0\n", stderr: "", exitCode: 0 });
+  context.exec.mockResolvedValue({
+    stdout: "v24.22.0\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
@@ -100,7 +110,11 @@ describe("native setup boundaries", () => {
     expect(await integratedInstallation(root, "agents")).toBe(true);
   });
   it("refuses incompatible Node before preparing an unusable native build", async () => {
-    context.exec.mockResolvedValue({ stdout: "v18.20.0\n", stderr: "", exitCode: 0 });
+    context.exec.mockResolvedValue({
+      stdout: "v18.20.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
     await expect(
       prepareIntegratedSetup({ ...options("codey"), action: "install" }, context),
     ).rejects.toThrow("20 or newer");
@@ -131,12 +145,24 @@ describe("native setup boundaries", () => {
       exitCode: 0,
     });
     const result = await readOpenHarnessSetup(context, root);
-    expect(result).toMatchObject({ installed: true, account: "offline", runtime: "unknown" });
+    expect(result).toMatchObject({
+      installed: true,
+      account: "offline",
+      runtime: "unknown",
+    });
     expect(JSON.stringify(result)).not.toMatch(/private-id|must-not-leak/u);
   });
   it("does not report signed-out Harness as ready just because auth status exits zero", async () => {
-    context.exec.mockResolvedValueOnce({ stdout: '{"loggedIn":false}', stderr: "", exitCode: 0 });
-    context.exec.mockResolvedValueOnce({ stdout: "○ stopped", stderr: "", exitCode: 0 });
+    context.exec.mockResolvedValueOnce({
+      stdout: '{"loggedIn":false}',
+      stderr: "",
+      exitCode: 0,
+    });
+    context.exec.mockResolvedValueOnce({
+      stdout: "○ stopped",
+      stderr: "",
+      exitCode: 0,
+    });
     expect(await readIntegratedSetup(options("openharness"), context)).toMatchObject({
       installation: "installed",
       account: "sign-in-required",
@@ -198,10 +224,18 @@ it("verified native archive install is atomic, rejects bad checksums, and preser
       `#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = "1" ] || exit 42\nexec '${process.execPath.replaceAll("'", "'\\''")}' "$@"\n`,
       { mode: 0o700 },
     );
-    const plan = integratedInstallPlan({ recipe, destination, cwd: root, node });
+    const plan = integratedInstallPlan({
+      recipe,
+      destination,
+      cwd: root,
+      node,
+    });
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    await promisify(execFile)(plan.command!, plan.args, { env, timeout: 15_000 });
+    await promisify(execFile)(plan.command!, plan.args, {
+      env,
+      timeout: 15_000,
+    });
     expect(await readFile(join(destination, "native.txt"), "utf8")).toBe("original bytes");
     await expect(
       promisify(execFile)(process.execPath, [
@@ -236,4 +270,59 @@ it("verified native archive install is atomic, rejects bad checksums, and preser
       }),
     );
   }
+});
+
+it("explains missing Linux Hydra build tools before downloading upstream source", async () => {
+  context.resolveCommand.mockImplementation(async (command) => {
+    if (["make", "c++"].includes(command)) throw new Error("not installed");
+    return command;
+  });
+  try {
+    await expect(
+      prepareIntegratedSetup(
+        {
+          ...options("hydra"),
+          platform: "linux",
+          arch: "x64",
+          action: "install",
+        },
+        context,
+      ),
+    ).rejects.toThrow("requires make, c++");
+    expect(await readdir(root)).toEqual([]);
+  } finally {
+    context.resolveCommand.mockImplementation(async (command) => command);
+  }
+});
+
+it("prepares the verified Linux Orca slot with its isolated profile and original pinned Node", async () => {
+  const recipe = integratedRecipe("orca", "linux", "x64")!;
+  expect(recipe.format).toBe("deb");
+  const directory = join(root, "tools/native", `orca-${recipe.version}`);
+  for (const file of [...recipe.verify, "familiar-orcad/slot/.runtime-node"]) {
+    await mkdir(join(directory, file, ".."), { recursive: true });
+    await writeFile(
+      join(directory, file),
+      file.endsWith(".runtime-node") ? "a".repeat(64) : "original",
+    );
+  }
+  await writeFile(
+    join(directory, ".familiar-install.json"),
+    JSON.stringify({ id: "orca", version: recipe.version }),
+  );
+  const prepared = await prepareIntegratedSetup(
+    { ...options("orca"), platform: "linux", arch: "x64", action: "start" },
+    context,
+  );
+  expect(prepareToolSetup.output.parse(prepared).plan).toMatchObject({
+    mode: "terminal",
+    command: "/usr/bin/env",
+  });
+  expect(prepared!.plan!.args).toContain("127.0.0.1");
+  expect(prepared!.plan!.args.join(" ")).toContain("node-" + "a".repeat(64));
+  expect(prepared!.plan!.args).toContain(`ORCA_USER_DATA=${join(root, "familiar/native/orca")}`);
+  expect(JSON.stringify(prepared)).not.toContain("no-sandbox");
+  expect(await readFile(join(root, "familiar/native/orca/orca-cli"), "utf8")).toContain(
+    "ORCA_USER_DATA_PATH=",
+  );
 });

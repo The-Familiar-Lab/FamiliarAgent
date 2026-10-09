@@ -15,11 +15,13 @@ const SIGN_IN = {
   codex: ["login", "--device-auth"],
   claude: ["auth", "login"],
   cursor: ["login"],
+  antigravity: [],
 } as const;
 const COMMANDS: Record<string, string> = {
   codex: "codex",
   claude: "claude",
   cursor: "cursor-agent",
+  antigravity: "agy",
   aider: "aider",
   goose: "goose",
   openrig: "rig",
@@ -84,9 +86,11 @@ export class ToolSetup {
     if (!tool.installed) return status;
     if (id in SIGN_IN) {
       status.actions.push({ id: "login", label: "Sign in" });
-      if (probeAccount && (id === "claude" || id === "codex")) {
-        await this.accountStatus(id, status);
-      }
+      if (id === "antigravity")
+        status.details.push(
+          "The original CLI manages its own updates. Update installation re-runs its installer; an existing CLI may be retained and update when next launched.",
+        );
+      if (probeAccount) await this.accountStatus(id as keyof typeof SIGN_IN, status);
     } else if (id === "aider") {
       await this.aiderStatus(status);
     } else if (id === "goose") {
@@ -178,12 +182,17 @@ export class ToolSetup {
     );
   }
 
-  private async accountStatus(id: "claude" | "codex", status: ToolSetupStatus) {
+  private async accountStatus(id: keyof typeof SIGN_IN, status: ToolSetupStatus) {
     try {
       const output = await executeCommand(
         {
           command: await this.tools.resolveCommand(COMMANDS[id]!),
-          args: id === "claude" ? ["auth", "status", "--json"] : ["login", "status"],
+          args: {
+            claude: ["auth", "status", "--json"],
+            codex: ["login", "status"],
+            cursor: ["status", "--format", "json"],
+            antigravity: ["models"],
+          }[id],
           env: { PATH: this.tools.searchPath() },
           cwd: await this.folder(),
           timeoutMs: 15_000,
@@ -191,10 +200,23 @@ export class ToolSetup {
         },
         new AbortController().signal,
       );
-      const authenticated =
-        id === "claude"
-          ? JSON.parse(output.stdout).loggedIn === true
-          : output.exitCode === 0 && /logged in/iu.test(output.stdout + output.stderr);
+      const text = output.stdout + output.stderr;
+      let authenticated: boolean;
+      if (id === "claude" || id === "cursor") {
+        const account = JSON.parse(output.stdout);
+        const flag = id === "claude" ? account.loggedIn : account.isAuthenticated;
+        if (typeof flag !== "boolean") throw new Error("Unknown native account response");
+        authenticated = output.exitCode === 0 && flag;
+      } else if (id === "antigravity") {
+        const models = output.stdout.trim().split(/\r?\n/u);
+        authenticated =
+          output.exitCode === 0 && models.every((line) => /^[^\t]+\t[^\t]+$/u.test(line));
+        if (!authenticated && !/please sign in|not signed in/iu.test(text))
+          throw new Error("Could not verify the Antigravity model catalog");
+      } else {
+        authenticated =
+          output.exitCode === 0 && /logged in/iu.test(text) && !/not logged in/iu.test(text);
+      }
       status.account = authenticated ? "signed-in" : "sign-in-required";
       status.message = authenticated
         ? "The original tool reports an active sign-in."

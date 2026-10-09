@@ -6,7 +6,8 @@ import type { ProjectIconSource } from "@getpaseo/protocol/messages";
 
 import { writeFileAtomic } from "../server/atomic-file.js";
 import type { PersistedProjectRecord, ProjectRegistry } from "../server/workspace-registry.js";
-import { getImageDimensions, getProjectIcon, type ProjectIcon } from "./project-icon.js";
+import { getImageDimensions, type ProjectIcon } from "./project-icon.js";
+import { discoverProjectIcon } from "./project-icon-discovery.js";
 
 const MAX_ICON_BYTES = 512 * 1024;
 const ICON_TOO_LARGE_ERROR = "Icon must be 512 KB or smaller";
@@ -67,18 +68,23 @@ export interface ProjectIconSnapshot {
 
 /** Keeps the icon bytes served by a session aligned with its advertised revision. */
 export class ProjectIconReader {
-  private readonly snapshots = new Map<string, ProjectIconSnapshot>();
+  private readonly snapshots = new Map<
+    string,
+    { rootPath: string; snapshot: ProjectIconSnapshot }
+  >();
 
   constructor(private readonly paseoHome: string) {}
 
   async snapshot(project: PersistedProjectRecord): Promise<ProjectIconSnapshot> {
     const snapshot = await readProjectIconSnapshot({ paseoHome: this.paseoHome, project });
-    this.snapshots.set(project.projectId, snapshot);
+    this.snapshots.set(project.projectId, { rootPath: project.rootPath, snapshot });
     return snapshot;
   }
 
   async read(project: PersistedProjectRecord): Promise<ProjectIcon | null> {
-    return (this.snapshots.get(project.projectId) ?? (await this.snapshot(project))).icon;
+    const cached = this.snapshots.get(project.projectId);
+    return (cached?.rootPath === project.rootPath ? cached.snapshot : await this.snapshot(project))
+      .icon;
   }
 }
 
@@ -102,7 +108,7 @@ export async function readProjectIconSnapshot(input: {
         : `custom:none:${input.project.customIconRevision}`,
     };
   }
-  const icon = await getProjectIcon(input.project.rootPath);
+  const icon = await discoverProjectIcon(input.project.rootPath);
   if (!icon) return { icon: null, revision: "automatic:none:v1" };
   return { icon, revision: iconRevision("automatic", icon) };
 }

@@ -12,6 +12,7 @@ import { integratedRecipe, INTEGRATED_SETUP_IDS } from "./setup-recipes.js";
 import { HYDRA_COMPAT } from "./hydra-compat.js";
 import { prepareCodegRuntime, prepareOrcaCli, privateProfile } from "./setup-runtime.js";
 import { inspectDockerSkills } from "./docker-skills.js";
+import { prepareOrcaServer } from "./orca-runtime.js";
 import { nodeToolCommand } from "./setup-node.js";
 
 type Context = Pick<ToolActionContext, "resolveCommand" | "exec">;
@@ -37,7 +38,11 @@ function paths(options: SetupOptions) {
     "native",
     `${options.id}-${recipe?.version ?? "native"}`,
   );
-  return { recipe, directory, profile: join(options.root, "familiar", "native", options.id) };
+  return {
+    recipe,
+    directory,
+    profile: join(options.root, "familiar", "native", options.id),
+  };
 }
 
 async function optionalCommand(context: Context, command: string) {
@@ -50,7 +55,12 @@ async function optionalCommand(context: Context, command: string) {
 
 export async function readOpenHarnessSetup(context: Context, cwd: string) {
   const command = await optionalCommand(context, "harness");
-  if (!command) return { installed: false, account: "unknown", runtime: "unknown" } as const;
+  if (!command)
+    return {
+      installed: false,
+      account: "unknown",
+      runtime: "unknown",
+    } as const;
   try {
     const result = await context.exec({
       command,
@@ -90,7 +100,12 @@ export async function readOpenHarnessSetup(context: Context, cwd: string) {
       runtime,
     } as const;
   } catch {
-    return { installed: true, command, account: "unknown", runtime: "unknown" } as const;
+    return {
+      installed: true,
+      command,
+      account: "unknown",
+      runtime: "unknown",
+    } as const;
   }
 }
 
@@ -169,7 +184,12 @@ export async function readIntegratedSetup(
     details: [],
     actions:
       recipe && !canonical
-        ? [{ id: "install", label: present ? "Install integration files" : "Install" }]
+        ? [
+            {
+              id: "install",
+              label: present ? "Install integration files" : "Install",
+            },
+          ]
         : [],
   };
   if (!recipe)
@@ -265,11 +285,18 @@ export function integratedActionDefaults(options: SetupOptions, node: string): D
     ];
   }
   if (options.id === "alethe" && recipe)
-    return map(["run"], { command: join(directory, recipe.verify[0]!), codexCommand: "codex" });
+    return map(["run"], {
+      command: join(directory, recipe.verify[0]!),
+      codexCommand: "codex",
+    });
   if (options.id === "openharness")
-    return map(["status", "search", "run"], { command: join(homedir(), ".local/bin/harness") });
+    return map(["status", "search", "run"], {
+      command: join(homedir(), ".local/bin/harness"),
+    });
   if (options.id === "orca")
-    return map(["list", "create", "send", "read"], { command: join(profile, "orca-cli") });
+    return map(["list", "create", "send", "read"], {
+      command: join(profile, "orca-cli"),
+    });
   return [];
 }
 
@@ -307,6 +334,49 @@ async function prepareHydra(options: SetupOptions, node: string): Promise<ToolPl
   };
 }
 
+async function requireBuildTools(options: SetupOptions, context: Context) {
+  if (options.id !== "hydra" || (options.platform ?? process.platform) !== "linux") return;
+  const missing: string[] = [];
+  for (const command of ["make", "c++", "python3"])
+    if (!(await optionalCommand(context, command))) missing.push(command);
+  if (missing.length)
+    throw new Error(
+      `Hydra builds its original native terminal module and requires ${missing.join(", ")}. Install the distribution's C/C++ build tools and Python, or select a server where Hydra is already installed. No system packages were changed.`,
+    );
+}
+
+async function prepareOrca(
+  options: SetupOptions & { action: string },
+  node: string,
+  entry: string,
+  settings: Defaults,
+) {
+  const { directory, profile } = paths(options);
+  const linux = (options.platform ?? process.platform) === "linux";
+  await prepareOrcaCli(
+    node,
+    join(directory, entry),
+    join(profile, "orca-cli"),
+    linux ? profile : undefined,
+  );
+  if (options.action === "configure") return { settings };
+  if (options.action !== "start") throw new Error("Unknown Orca setup action.");
+  const plan: ToolPlan = linux
+    ? await prepareOrcaServer({ directory, profile, cwd: options.cwd })
+    : {
+        toolId: options.id,
+        action: "launch",
+        mode: "desktop",
+        cwd: options.cwd,
+        command: "/usr/bin/open",
+        args: [join(directory, "Orca.app")],
+        notes: [
+          "Opens the original Orca app. Register its CLI in Settings, and add the project before using terminal actions.",
+        ],
+      };
+  return { plan, settings };
+}
+
 export async function prepareIntegratedSetup(
   options: SetupOptions & { action: string },
   context: Context,
@@ -324,6 +394,7 @@ export async function prepareIntegratedSetup(
       throw new Error(
         "No verified original installer is available for this platform. Use the original release instructions.",
       );
+    await requireBuildTools(options, context);
     return {
       plan: integratedInstallPlan({
         recipe,
@@ -371,7 +442,7 @@ export async function prepareIntegratedSetup(
       })),
     };
   if (options.id === "orca" && recipe)
-    await prepareOrcaCli(node, join(directory, recipe.verify[0]!), join(profile, "orca-cli"));
+    return prepareOrca(options, node, recipe.verify[0]!, settings);
   if (options.id === "codeg" && ["start", "configure"].includes(options.action)) {
     const prepared = await prepareCodegRuntime({
       directory,
@@ -385,21 +456,6 @@ export async function prepareIntegratedSetup(
   }
   if (options.action === "start" && options.id === "hydra")
     return { plan: await prepareHydra(options, node), settings };
-  if (options.action === "start" && options.id === "orca")
-    return {
-      plan: {
-        toolId: options.id,
-        action: "launch",
-        mode: "desktop",
-        cwd: options.cwd,
-        command: "/usr/bin/open",
-        args: [join(directory, "Orca.app")],
-        notes: [
-          "Opens the original Orca app. Register its CLI in Settings, and add the project before using terminal actions.",
-        ],
-      },
-      settings,
-    };
   if (options.action !== "configure") throw new Error("Unknown integrated tool setup action.");
   return { settings };
 }

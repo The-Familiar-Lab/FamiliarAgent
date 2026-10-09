@@ -290,7 +290,7 @@ function bsshProcess(command: ToolCommand) {
       stderr: "",
       exitCode: 0,
     };
-  if (command.args[0] === "-G")
+  if (command.args.includes("-G"))
     return {
       stdout:
         "host familiar_alias\nhostname 127.0.0.1\nuser user\nport 2200\nverifyhostkeydns false\nconnecttimeout none\nhostkeyalgorithms unsupported,ssh-ed25519\npubkeyacceptedalgorithms ssh-ed25519\nkexalgorithms curve25519-sha256\nciphers aes256-ctr\nmacs hmac-sha2-256\n",
@@ -300,6 +300,26 @@ function bsshProcess(command: ToolCommand) {
   return { stdout: "command completed", stderr: "", exitCode: 0 };
 }
 describe("bssh profile compatibility", () => {
+  it("resolves an explicit SSH config without changing the user's original file", async () => {
+    const f = await fixture();
+    const source = path.join(f.directory, "ssh config");
+    await writeFile(source, "Host selected\n HostName 127.0.0.1\n", { mode: 0o600 });
+    f.exec.mockImplementation(async (command) => bsshProcess(command));
+    await bsshAdapter.execute(
+      { ...f.input, action: "ping", parameters: { hosts: "selected", sshConfig: source } },
+      f.context,
+    );
+    expect(f.exec).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "ssh", args: ["-F", source, "-G", "--", "selected"] }),
+    );
+    expect(await readFile(source, "utf8")).toBe("Host selected\n HostName 127.0.0.1\n");
+    await expect(
+      bsshAdapter.execute(
+        { ...f.input, action: "ping", parameters: { hosts: "selected", sshConfig: "relative" } },
+        f.context,
+      ),
+    ).rejects.toThrow("absolute regular file");
+  });
   it("expands existing OpenSSH aliases and intersects native algorithms without broadening user policy", async () => {
     const f = await fixture();
     f.exec.mockImplementation(async (command) => bsshProcess(command));

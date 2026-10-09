@@ -1,4 +1,4 @@
-import { open, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   ToolActionContext,
@@ -6,7 +6,7 @@ import type {
   ToolCommand,
 } from "../tool-actions/contracts.js";
 
-export const NATIVE_OUTPUT_LIMIT = 512 * 1024;
+export { NATIVE_OUTPUT_LIMIT, readBounded } from "./native-files.js";
 export async function runNative(context: ToolActionContext, command: ToolCommand): Promise<string> {
   const result = await context.exec({
     ...command,
@@ -36,20 +36,6 @@ export async function inputFile(context: ToolActionContext, input: string): Prom
   const filename = path.join(context.runDirectory, "input.txt");
   await writeFile(filename, input, { mode: 0o600 });
   return filename;
-}
-export async function readBounded(filename: string): Promise<string> {
-  const handle = await open(filename, "r");
-  try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > NATIVE_OUTPUT_LIMIT)
-      throw new Error("Native artifact is not a regular file below 512 KiB");
-    const buffer = Buffer.alloc(NATIVE_OUTPUT_LIMIT + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > NATIVE_OUTPUT_LIMIT) throw new Error("Native artifact grew beyond 512 KiB");
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    await handle.close();
-  }
 }
 export function objectJson(text: string): Record<string, unknown> {
   const value: unknown = JSON.parse(text);
