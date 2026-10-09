@@ -1,3 +1,4 @@
+import { resolveAgentReply } from "./server/agent-reply.js";
 import { nativeActionContext } from "./server/tool-actions/context.js";
 import { ToolActions } from "./server/tool-actions/service.js";
 import { ToolRunStore } from "./server/tool-actions/store.js";
@@ -104,18 +105,41 @@ export default function contribute(server: PluginServerContext) {
         )
       : store.list();
   });
-  server.handle(agentStatus, async ({ agentId }, { paseo }) => {
+  server.handle(agentStatus, async ({ agentId, messageId }, { paseo }) => {
     const agent = paseo.agents.ref(agentId);
     const snapshot = await agent.refresh();
     if (!snapshot) throw new Error("Agent not found");
-    const timeline = await agent.timeline.refetch({ limit: 12, direction: "tail" });
+    const timeline = await agent.timeline.refetch({
+      limit: messageId ? 64 : 12,
+      direction: "tail",
+      projection: "canonical",
+    });
     if (timeline.error) throw new Error(timeline.error);
+    let assistantReply = messageId
+      ? await resolveAgentReply(agent, timeline, messageId)
+      : undefined;
+    if (assistantReply) {
+      const latest = await agent.timeline.refetch({
+        limit: 1,
+        direction: "tail",
+        projection: "canonical",
+      });
+      if (
+        latest.error ||
+        latest.gap ||
+        latest.staleCursor ||
+        latest.epoch !== timeline.epoch ||
+        latest.endCursor?.seq !== timeline.endCursor?.seq
+      )
+        assistantReply = null;
+    }
     return {
       agentId,
       provider: snapshot.agent.provider,
       status: snapshot.agent.status,
       cwd: snapshot.agent.cwd,
       permissions: snapshot.agent.pendingPermissions ?? [],
+      ...(messageId ? { assistantReply } : {}),
       recent: timeline.entries.flatMap(({ item }) =>
         item.type === "assistant_message" || item.type === "user_message" ? [item.text] : [],
       ),

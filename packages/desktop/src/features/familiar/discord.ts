@@ -8,23 +8,30 @@ import { createNodeEntrypointInvocation } from "../../daemon/runtime-paths.js";
 import { getBundledCliShimPath } from "../../integrations/cli-install/index.js";
 import { familiarPaths } from "./paths.js";
 import { existsSync } from "node:fs";
+import { discordSourceSchema, inspectDiscordSource, spawnDiscordSource } from "./discord-source.js";
 const bindingSchema = z
   .object({
     channelId: z.string().regex(/^\d+$/u),
     host: z.string().min(1).max(4096),
     agentId: z.string().min(1).max(160).optional(),
     sessionId: z.string().min(1).max(160).optional(),
-    allowedUserIds: z.array(z.string().regex(/^\d+$/u)).min(1),
+    allowedUserIds: z.array(z.string().regex(/^\d+$/u)).default([]),
+    allowedRoleIds: z.array(z.string().regex(/^\d+$/u)).default([]),
     sharedWorkspace: z.string().min(1).max(100).default("main"),
   })
   .strict()
   .refine(
     (value) => Boolean(value.agentId) !== Boolean(value.sessionId),
     "Choose a native agent or a logical session",
+  )
+  .refine(
+    (value) => value.allowedUserIds.length + value.allowedRoleIds.length > 0,
+    "Choose allowed users or roles",
   );
 const settingsSchema = z
   .object({
     bindings: z.array(bindingSchema).max(32),
+    source: discordSourceSchema.optional(),
     servers: z.record(z.string().min(1), z.string().min(1).max(4096)).default({}),
   })
   .strict();
@@ -35,6 +42,7 @@ const READY_TIMEOUT_MS = 30_000;
 /** The connector is opt-in and owns no model loop; the app owns only its process and credentials. */
 export class DiscordConnection {
   private child: ChildProcessWithoutNullStreams | null = null;
+  private relay: ChildProcessWithoutNullStreams | null = null;
   private ready = false;
   private error: string | null = null;
   private starting: Promise<void> | null = null;
@@ -64,7 +72,12 @@ export class DiscordConnection {
       });
     let state = this.child ? "connecting" : "stopped";
     if (this.ready) state = "connected";
-    return { ...settings, tokenSet, state, error: this.error };
+    return {
+      ...settings,
+      tokenSet: Boolean(settings.source) || tokenSet,
+      state,
+      error: this.error,
+    };
   }
   async save(input: unknown) {
     if (this.child || this.starting)
@@ -73,6 +86,8 @@ export class DiscordConnection {
     if (new Set(settings.bindings.map((item) => item.channelId)).size !== settings.bindings.length)
       throw new Error("Each channel can be bound once.");
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    if (token && settings.source)
+      throw new Error("Choose a saved token or an original configuration, not both.");
     if (token) {
       if (!safeStorage.isEncryptionAvailable())
         throw new Error("OS credential encryption is unavailable.");
@@ -95,6 +110,18 @@ export class DiscordConnection {
     );
     return this.status();
   }
+  private get entryPath(): string {
+    return app.isPackaged
+      ? path.join(process.resourcesPath, "familiar", "discord.cjs")
+      : path.join(app.getAppPath(), "assets", "familiar", "discord.cjs");
+  }
+  async inspectSource(input: unknown) {
+    const { source, createChannel } = z
+      .object({ source: discordSourceSchema, createChannel: z.boolean().default(false) })
+      .strict()
+      .parse(input);
+    return inspectDiscordSource(source, this.entryPath, createChannel);
+  }
   start(): Promise<void> {
     if (this.starting) return this.starting;
     if (this.child) return Promise.resolve();
@@ -106,9 +133,11 @@ export class DiscordConnection {
   private async launch(): Promise<void> {
     const settings = await this.settings();
     if (!settings.bindings.length) throw new Error("Add an authorized Discord channel first.");
-    if (!safeStorage.isEncryptionAvailable())
+    if (!settings.source && !safeStorage.isEncryptionAvailable())
       throw new Error("OS credential encryption is unavailable.");
-    const token = safeStorage.decryptString(await readFile(path.join(this.directory, "token.enc")));
+    const token = settings.source
+      ? null
+      : safeStorage.decryptString(await readFile(path.join(this.directory, "token.enc")));
     const configPath = path.join(this.directory, "runtime.json");
     const channels = Object.fromEntries(
       settings.bindings.map(({ channelId, ...binding }) => [channelId, binding]),
@@ -123,20 +152,37 @@ export class DiscordConnection {
       }),
       { mode: 0o600 },
     );
-    const entryPath = app.isPackaged
-      ? path.join(process.resourcesPath, "familiar", "discord.cjs")
-      : path.join(app.getAppPath(), "assets", "familiar", "discord.cjs");
     const invocation = createNodeEntrypointInvocation({
-      entrypoint: { entryPath, execArgv: [] },
+      entrypoint: { entryPath: this.entryPath, execArgv: [] },
       argvMode: "node-script",
-      args: [configPath],
+      args: settings.source ? ["--relay-cli", getBundledCliShimPath()] : [configPath],
       baseEnv: process.env,
     });
-    const child = spawn(invocation.command, invocation.args, {
+    const remote = settings.source
+      ? await spawnDiscordSource(settings.source, this.entryPath, {
+          channels,
+          servers: settings.servers,
+        })
+      : null;
+    const local = spawn(invocation.command, invocation.args, {
       env: invocation.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
+    const child = remote ?? local;
+    if (remote) {
+      this.relay = local;
+      child.stdout.pipe(local.stdin);
+      local.stdout.pipe(child.stdin);
+      local.stdin.on("error", () => child.kill("SIGTERM"));
+      local.stderr.resume();
+      local.once("error", () => child.kill("SIGTERM"));
+      local.once("close", () => child.kill("SIGTERM"));
+      child.once("close", () => {
+        local.kill("SIGTERM");
+        this.relay = null;
+      });
+    }
     this.child = child;
     this.ready = false;
     this.error = null;
@@ -185,7 +231,7 @@ export class DiscordConnection {
           this.error =
             "Discord Connector stopped unexpectedly. Reconnect after checking its settings.";
       });
-      child.stdin.end(token);
+      if (token !== null) child.stdin.end(token);
     });
   }
   async stop(): Promise<void> {
@@ -194,6 +240,7 @@ export class DiscordConnection {
     const closed = once(child, "close");
     const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
     child.kill("SIGTERM");
+    this.relay?.kill("SIGTERM");
     try {
       await closed;
     } finally {

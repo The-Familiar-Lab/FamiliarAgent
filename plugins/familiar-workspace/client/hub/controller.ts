@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   getPaseoClient,
   openExternalUrl,
@@ -43,16 +51,15 @@ import { resolveSetupModel, setupInstructions } from "./setup.js";
 import { readResourceCatalog, type HostResources } from "./resources.js";
 import { readHistory } from "../../shared/history.js";
 import { findNativeSession, CATALOG_PAGE_SIZE, forkWorktree } from "./entry.js";
-export const TABS = [
-  "Projects",
-  "Sessions",
-  "Inputs / Results",
-  "Tools",
-  "Memory & Skills",
-  "Files",
-  "Servers",
-  "History",
-] as const;
+import {
+  TABS,
+  readSetupReturn,
+  saveSetupReturn,
+  consumeSetupReturn,
+  discardSetupReturn,
+  type SetupReturn,
+} from "./setup-return.js";
+export { TABS } from "./setup-return.js";
 type Tab = (typeof TABS)[number];
 type Model = NonNullable<PaseoProviderModelsResult["models"]>[number];
 export interface HubProps extends PluginSurfaceProps {
@@ -75,12 +82,33 @@ function forkTitle(draft: string, parent: string): string {
 export function useHubController(props: HubProps) {
   const { host: entryHost, theme, navigation } = props;
   const hosts = useHosts();
+  const latestHosts = useRef(hosts);
+  latestHosts.current = hosts;
   const [catalogHostId] = useState(
     () =>
       hosts.find((item) => item.isLocal && item.status === "online")?.serverId ??
       hosts.find((item) => item.isLocal)?.serverId ??
       entryHost.id,
   );
+  const restoreVersion = useRef(0);
+  const pendingSetupReturn = useRef<SetupReturn | null>(null);
+  const cancelSetupRestore = useCallback(() => {
+    restoreVersion.current++;
+    try {
+      const saved = pendingSetupReturn.current ?? readSetupReturn(catalogHostId);
+      if (saved) consumeSetupReturn(catalogHostId, saved.id);
+    } catch {
+      discardSetupReturn(catalogHostId);
+    } finally {
+      pendingSetupReturn.current = null;
+    }
+  }, [catalogHostId]);
+  const navigate =
+    <T>(setter: Dispatch<SetStateAction<T>>) =>
+    (value: SetStateAction<T>) => {
+      cancelSetupRestore();
+      setter(value);
+    };
   const host = {
     id: catalogHostId,
     label: hosts.find((item) => item.serverId === catalogHostId)?.label ?? catalogHostId,
@@ -98,6 +126,7 @@ export function useHubController(props: HubProps) {
     [title, setTitle] = useState("");
   const selectTarget = useCallback(
     (serverId: string) => {
+      cancelSetupRestore();
       if (serverId === target) return;
       setTarget(serverId);
       setCwd(
@@ -105,7 +134,7 @@ export function useHubController(props: HubProps) {
           ?.locator ?? "",
       );
     },
-    [project, target],
+    [project, target, cancelSetupRestore],
   );
   const [tools, setTools] = useState<
       {
@@ -118,6 +147,21 @@ export function useHubController(props: HubProps) {
     [modelId, setModelId] = useState(""),
     [thinking, setThinking] = useState("");
   const [memory, setMemory] = useState("");
+  const [toolSettingsVersions, setToolSettingsVersions] = useState<Record<string, number>>({});
+  const updatedToolSettings = useCallback((serverId: string, id: string) => {
+    const key = `${serverId}:${id}`;
+    setToolSettingsVersions((versions) => ({ ...versions, [key]: (versions[key] ?? 0) + 1 }));
+  }, []);
+  const [setupTarget, setSetupTarget] = useState<{
+    serverId: string;
+    toolId: string;
+    returnTab?: Tab;
+  } | null>(null);
+  const openSetup = (serverId: string, selectedToolId: string) => {
+    selectTarget(serverId);
+    setToolId(selectedToolId);
+    setSetupTarget({ serverId, toolId: selectedToolId, returnTab: tab });
+  };
   const [separateWorktree, setSeparateWorktree] = useState(false);
   const [resourceCatalog, setResourceCatalog] = useState<HostResources[]>([]);
   const resources = resourceCatalog.find((item) => item.serverId === target)?.value ?? null;
@@ -162,6 +206,61 @@ export function useHubController(props: HubProps) {
     },
     [fail],
   );
+  const explicitEntry = Boolean(
+    props.params?.agentId || (props.params?.historyServerId && props.params?.historyId),
+  );
+  const catalogOnline = hosts.some((item) => item.serverId === host.id && item.status === "online");
+  useEffect(() => {
+    if (explicitEntry || !catalogOnline) return;
+    let current = true;
+    const generation = restoreVersion.current;
+    const restore = async () => {
+      const saved = readSetupReturn(host.id);
+      if (!saved) return;
+      pendingSetupReturn.current = saved;
+      if (!latestHosts.current.some((item) => item.serverId === saved.target))
+        throw new Error(
+          "The setup return server is no longer configured. Choose a server to continue.",
+        );
+      const logical = saved.sessionId
+        ? await hostRpc(host.id, readComposition, { id: saved.sessionId })
+        : null;
+      if (logical && logical.projectId !== saved.projectId)
+        throw new Error("The saved session no longer belongs to this project. Select it again.");
+      const owner = saved.projectId
+        ? await hostRpc(host.id, readCompositionProject, { id: saved.projectId })
+        : null;
+      if (!current || generation !== restoreVersion.current) return;
+      setProject(owner);
+      setSession(logical);
+      setMemory(logical?.memory ?? owner?.memory ?? "");
+      setTitle(saved.title);
+      setTarget(saved.target);
+      setToolId(saved.toolId);
+      setCwd(saved.cwd);
+      setTab(saved.tab);
+      consumeSetupReturn(host.id, saved.id);
+      pendingSetupReturn.current = null;
+      setNotice("Returned to your project and session after tool setup.");
+    };
+    void restore().catch((value) => {
+      if (current && generation === restoreVersion.current) fail(value);
+    });
+    return () => {
+      current = false;
+    };
+  }, [host.id, catalogOnline, explicitEntry, fail]);
+  const rememberSetupReturn = (serverId: string, selectedToolId: string) => {
+    saveSetupReturn(host.id, {
+      projectId: project?.id ?? null,
+      sessionId: session?.id ?? null,
+      target: serverId,
+      toolId: selectedToolId,
+      cwd,
+      title,
+      tab: setupTarget?.returnTab ?? tab,
+    });
+  };
   const hostName = useCallback(
     (id: string) => hosts.find((item) => item.serverId === id)?.label ?? id,
     [hosts],
@@ -278,6 +377,7 @@ export function useHubController(props: HubProps) {
     );
   };
   const selectProject = async (id: string) => {
+    cancelSetupRestore();
     const value = await hostRpc(host.id, readCompositionProject, { id });
     setProject(value);
     setCatalogOffset(0);
@@ -290,6 +390,7 @@ export function useHubController(props: HubProps) {
   };
   const selectSession = useCallback(
     async (id: string) => {
+      cancelSetupRestore();
       const value = await hostRpc(host.id, readComposition, { id });
       const owner = await hostRpc(host.id, readCompositionProject, {
         id: value.projectId,
@@ -309,7 +410,7 @@ export function useHubController(props: HubProps) {
         setToolId(endpoint.harness ?? endpoint.provider);
       }
     },
-    [host.id, hosts],
+    [host.id, hosts, cancelSetupRestore],
   );
   const mapping = (): CompositionResource => ({
     id: operationId(),
@@ -885,7 +986,7 @@ export function useHubController(props: HubProps) {
     navigation,
     hosts,
     tab,
-    setTab,
+    setTab: navigate(setTab),
     filter,
     setFilter,
     query,
@@ -897,19 +998,25 @@ export function useHubController(props: HubProps) {
     sessions,
     setSessions,
     project,
-    setProject,
+    setProject: navigate(setProject),
     session,
-    setSession,
+    setSession: navigate(setSession),
     target,
     setTarget: selectTarget,
     cwd,
-    setCwd,
+    setCwd: navigate(setCwd),
     title,
-    setTitle,
+    setTitle: navigate(setTitle),
     tools,
     setTools,
     toolId,
-    setToolId,
+    setToolId: navigate(setToolId),
+    setupTarget,
+    setSetupTarget,
+    openSetup,
+    rememberSetupReturn,
+    toolSettingsVersions,
+    updatedToolSettings,
     models,
     setModels,
     modelId,

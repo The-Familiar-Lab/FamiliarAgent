@@ -238,6 +238,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "firetower",
+    command: "firetower",
     name: "Firetower",
     description: "Original compute pool and remote session management.",
     capabilities: ["orchestration", "workspace"],
@@ -246,6 +247,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "skulk",
+    command: "skulk",
     name: "Skulk",
     description: "Original SSH, worktree and tmux orchestration.",
     capabilities: ["orchestration", "workspace", "git"],
@@ -254,6 +256,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "bssh",
+    command: "bssh",
     name: "bssh",
     description: "Original parallel SSH and cluster shell.",
     capabilities: ["workspace"],
@@ -262,6 +265,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "coder",
+    command: "coder",
     name: "Coder",
     description: "Existing development workspace infrastructure.",
     capabilities: ["workspace", "git"],
@@ -273,6 +277,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "juicefs",
+    command: "juicefs",
     name: "JuiceFS",
     description: "Existing shared filesystem mounts can be mapped as project folders.",
     capabilities: ["workspace"],

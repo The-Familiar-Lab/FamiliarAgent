@@ -29,6 +29,10 @@ async function verifySdk(
   });
 }
 
+const SDK_DEADLINE_SECONDS = 300;
+const QUEUED_DEADLINE_SECONDS = 1800;
+const DEADLINE_MAX_SECONDS = 3590;
+
 function executionDeadline(request: ToolActionRequest): number {
   if (
     ["run", "dispatch", "delegate"].includes(request.action) &&
@@ -37,8 +41,11 @@ function executionDeadline(request: ToolActionRequest): number {
     throw new Error(
       "The original unattended superharness runner requires an explicit bypassPermissions selection",
     );
-  const seconds = Number(request.parameters.timeoutSeconds || "90");
-  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 3590)
+  const defaultSeconds = ["dispatch", "delegate"].includes(request.action)
+    ? QUEUED_DEADLINE_SECONDS
+    : SDK_DEADLINE_SECONDS;
+  const seconds = Number(request.parameters.timeoutSeconds || defaultSeconds);
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > DEADLINE_MAX_SECONDS)
     throw new Error("Deadline must be 1–3590 seconds");
   return seconds;
 }
@@ -100,7 +107,7 @@ export const superharnessAdapter: ToolActionAdapter = {
         {
           key: "timeoutSeconds",
           label: "Native deadline (seconds)",
-          description: "Default 90; choose 1–3590 for longer native orchestration.",
+          description: "Default 1800; choose 1–3590 for native orchestration.",
         },
       ],
     },
@@ -123,7 +130,7 @@ export const superharnessAdapter: ToolActionAdapter = {
         {
           key: "timeoutSeconds",
           label: "Deadline (seconds)",
-          description: "Default 90; choose 1–3590.",
+          description: "Default 1800; choose 1–3590.",
         },
       ],
     },
@@ -146,7 +153,7 @@ export const superharnessAdapter: ToolActionAdapter = {
         {
           key: "timeoutSeconds",
           label: "Native deadline (seconds)",
-          description: "Default 90; choose 1–3590.",
+          description: "Default 300; choose 1–3590.",
         },
       ],
     },
@@ -157,7 +164,8 @@ export const superharnessAdapter: ToolActionAdapter = {
     let args: string[];
     let id: string | undefined;
     if (request.action === "init") args = ["init", "--skip-hooks"];
-    else if (request.action === "status") args = ["contract", "--project", request.cwd];
+    else if (request.action === "status")
+      args = ["contract", "--project", request.cwd, "--include-subtasks"];
     else if (request.action === "task-create") {
       id = `familiar-${path.basename(context.runDirectory).replaceAll(/[^A-Za-z0-9_-]/gu, "-")}`;
       args = [
@@ -222,6 +230,9 @@ export const superharnessAdapter: ToolActionAdapter = {
     } else throw new Error("Unsupported superharness action");
     const env = await launchEnvironment(executable, context);
     if (request.action === "delegate") env.SUPERHARNESS_CONFIRM_NON_INTERACTIVE = "YES";
+    // The original dispatcher otherwise wraps non-interactive runs in `script`,
+    // whose closed stdin can terminate the launcher before it receives its task.
+    if (request.action === "dispatch") env.SUPERHARNESS_NO_PTY_WRAP = "1";
     const output = await runNative(context, {
       command: executable,
       args,

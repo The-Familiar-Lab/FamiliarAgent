@@ -5,6 +5,12 @@ import { codeyAdapter } from "./codey.js";
 import { hydraAdapter } from "./hydra.js";
 import { openHarnessAdapter } from "./openharness.js";
 import { orcaAdapter } from "./orca.js";
+export {
+  readIntegratedSetup,
+  prepareIntegratedSetup,
+  integratedActionDefaults,
+  integratedInstallation,
+} from "./setup.js";
 
 export const INTEGRATED_TOOL_ADAPTERS = [
   orcaAdapter,

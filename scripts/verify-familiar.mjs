@@ -119,7 +119,13 @@ if (active.has("discord")) {
   tasks.push({
     name: "discord-tests",
     command: path.join(cwd, "node_modules/.bin/vitest"),
-    args: ["run", "apps/discord-bot/src/familiarBridge.test.ts", "--maxWorkers=2"],
+    args: [
+      "run",
+      "apps/discord-bot/src/familiarBridge.test.ts",
+      "apps/discord-bot/src/familiarSource.test.ts",
+      "apps/discord-bot/src/familiarRelay.test.ts",
+      "--maxWorkers=2",
+    ],
     cwd,
   });
 }

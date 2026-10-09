@@ -12,6 +12,7 @@ import { HubMemory } from "./hub/memory.js";
 import { useResultFlow } from "./hub/result-flow.js";
 import { HubResults } from "./hub/results.js";
 import { HubServers } from "./hub/servers.js";
+import { ToolSetupDialog } from "./hub/tool-setup.js";
 export function FamiliarHub(props: HubProps) {
   const hub = useHubController(props);
   const ui = useHubUi(props.theme, hub.busy);
@@ -41,6 +42,7 @@ export function FamiliarHub(props: HubProps) {
     );
   return (
     <ScrollView style={ui.page} contentContainerStyle={ui.content}>
+      <ToolSetupDialog hub={hub} ui={ui} />
       <Text style={ui.heading}>Familiar Hub</Text>
       <Text style={muted}>
         One project. Your tools, conversations and servers. Switch how you work while keeping shared

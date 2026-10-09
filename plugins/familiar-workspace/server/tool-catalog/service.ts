@@ -16,6 +16,7 @@ import {
 import { BUILTIN_TOOLS, type BuiltinTool } from "./catalog.js";
 import { directory, readJson, writeJson, writeText } from "./files.js";
 import { prepareNativeInstaller } from "./installers.js";
+import { integratedInstallation } from "../integrated-tools/setup.js";
 
 interface Options {
   home?: string;
@@ -221,6 +222,7 @@ export class ToolCatalog {
     const command = custom?.launch?.command ?? tool.command;
     const executablePath = command ? await this.findExecutable(command) : undefined;
     const desktopApp = await this.desktop(tool.desktopApp);
+    const canonicalInstall = await integratedInstallation(this.root, tool.id);
     let installReason: string | undefined;
     try {
       await this.installPlan(tool, this.home);
@@ -237,7 +239,7 @@ export class ToolCatalog {
       ...describeTool(tool),
       modes,
       custom: Boolean(custom),
-      installed: Boolean(executablePath || desktopApp),
+      installed: Boolean(executablePath || desktopApp || canonicalInstall),
       executablePath,
       url: custom?.url,
       installAvailable: !installReason,

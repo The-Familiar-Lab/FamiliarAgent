@@ -1,6 +1,24 @@
 import path from "node:path";
+import { lstat } from "node:fs/promises";
 import type { ToolActionAdapter } from "../tool-actions/contracts.js";
 import { inputFile, nativeId, optionalFlag, readBounded, runNative } from "./common.js";
+
+export async function privateEnvironmentFile(filename: string): Promise<string> {
+  if (!path.isAbsolute(filename) || filename.includes("\0"))
+    throw new Error("Choose an absolute private API environment file path");
+  const info = await lstat(filename).catch(() => null);
+  if (
+    !info ||
+    !info.isFile() ||
+    info.size > 64 * 1024 ||
+    (info.mode & 0o077) !== 0 ||
+    (process.getuid && info.uid !== process.getuid())
+  )
+    throw new Error(
+      "The API environment file must be a user-owned regular file no larger than 64 KiB with permissions 0600",
+    );
+  return filename;
+}
 
 /** Aider logs errors as blockquotes and can exit zero after authentication failure. */
 export function aiderReply(history: string, input: string): string {
@@ -34,6 +52,12 @@ export const aiderAdapter: ToolActionAdapter = {
       parameters: [
         { key: "model", label: "Model" },
         {
+          key: "envFile",
+          label: "Private API environment file",
+          description:
+            "Optional absolute path to a private .env file on this server (0600). Only its path is saved; Aider loads the credentials. Use Add API key in setup to prepare it.",
+        },
+        {
           key: "confirmations",
           label: "Native confirmations",
           description:
@@ -57,6 +81,9 @@ export const aiderAdapter: ToolActionAdapter = {
       return { state: "completed", text: await readBounded(filename), nativeId: filename };
     }
     if (request.action !== "run") throw new Error("Unsupported Aider action");
+    const envFile = request.parameters.envFile
+      ? await privateEnvironmentFile(request.parameters.envFile)
+      : undefined;
     const input = await inputFile(context, request.input);
     const history = path.join(context.runDirectory, "aider.chat.history.md");
     const args = [
@@ -72,6 +99,7 @@ export const aiderAdapter: ToolActionAdapter = {
       "--no-auto-commits",
     ];
     optionalFlag(args, "--model", request.parameters.model);
+    optionalFlag(args, "--env-file", envFile);
     const confirmations = request.parameters.confirmations || "deny";
     if (!["deny", "allow"].includes(confirmations))
       throw new Error("Choose deny or allow for native confirmations");

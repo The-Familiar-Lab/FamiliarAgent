@@ -24,7 +24,6 @@ export function HubWorkspace({
     setTitle,
     tools,
     toolId,
-    setToolId,
     models,
     modelId,
     setModelId,
@@ -71,13 +70,18 @@ export function HubWorkspace({
       </Text>
       <View style={ROW}>
         {tools
-          .filter((item) => item.serverId === target && item.tool.nativeProvider)
+          .filter(
+            (item) =>
+              item.serverId === target &&
+              (item.tool.nativeProvider || item.tool.modes.includes("terminal")),
+          )
           .map(({ tool }) => (
             <View key={tool.id}>
-              {button(tool.name, () => setToolId(tool.id), !tool.installed, tool.id === toolId)}
+              {button(tool.name, () => hub.openSetup(target, tool.id), false, tool.id === toolId)}
             </View>
           ))}
       </View>
+      {button("All tools", () => hub.setTab("Tools"))}
       <View style={ROW}>
         {models.map((model) => (
           <View key={model.id}>

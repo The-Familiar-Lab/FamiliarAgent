@@ -54,3 +54,22 @@ it("does not report a connected bot without a configured live login", async () =
   expect((await connection.status()).state).toBe("stopped");
   await connection.stop();
 });
+
+it("saves only an original configuration reference and role bindings without copying a token", async () => {
+  available.mockReturnValue(false);
+  const connection = new DiscordConnection(directory);
+  const source = {
+    sshEndpoint: "ssh://server?daemonPort=6787",
+    configPath: "/private/original/config.json",
+  };
+  const status = await connection.save({
+    source,
+    bindings: [{ ...binding, allowedUserIds: [], allowedRoleIds: ["900"] }],
+  });
+  expect(status.source).toEqual(source);
+  expect(status.tokenSet).toBe(true);
+  await expect(readFile(path.join(directory, "token.enc"))).rejects.toThrow();
+  await expect(
+    connection.save({ source, bindings: [binding], token: "never-copy" }),
+  ).rejects.toThrow("not both");
+});

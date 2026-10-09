@@ -34,6 +34,7 @@ export function useToolActionForm(
   const [loading, setLoading] = useState(false);
   const attempt = useRef<Attempt | null>(null);
   const pendingNative = useRef<{ serverId: string; id: string } | null>(null);
+  const settingsVersion = hub.toolSettingsVersions?.[`${hub.target}:${toolId}`] ?? 0;
   useEffect(() => {
     let active = true;
     setDefinitions([]);
@@ -76,7 +77,7 @@ export function useToolActionForm(
     return () => {
       active = false;
     };
-  }, [hub.target, toolId, actionId]);
+  }, [hub.target, toolId, actionId, settingsVersion]);
   useEffect(() => {
     if (!definitions.some((value) => value.toolId === hub.toolId) || hub.toolId === toolId) return;
     setToolId(hub.toolId);

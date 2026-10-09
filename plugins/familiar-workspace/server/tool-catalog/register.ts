@@ -16,12 +16,17 @@ import {
 import { ResourceLibrary } from "./resources.js";
 import { ToolCatalog } from "./service.js";
 import { prepareContextShims } from "./context-shims.js";
+import { ToolSetup } from "./setup.js";
+import { prepareToolSetup, readToolSetup } from "../../shared/tool-setup.js";
 
 /** Uses existing terminal, browser and native provider paths. The registrar
  * prepares processes; it never runs installation or agent loops in the daemon. */
 export function registerToolCatalog(server: PluginServerContext, root: string): void {
   const tools = new ToolCatalog(root);
   const resources = new ResourceLibrary(root);
+  const setup = new ToolSetup(root, tools);
+  server.handle(readToolSetup, ({ id }) => setup.status(id));
+  server.handle(prepareToolSetup, (input) => setup.prepare(input));
   server.handle(listTools, () => tools.list());
   server.handle(registerTool, (input) => tools.register(input));
   server.handle(removeTool, ({ id }) => tools.remove(id));

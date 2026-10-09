@@ -114,6 +114,23 @@ test("real daemon sends only the selected old response, retaining its logical se
     nativeRecord("user", "NEWER_PROMPT_DO_NOT_FORWARD") + nativeRecord("assistant", later),
   );
 
+  // Discord response delivery uses exact native client identity, never CLI diagnostic prose.
+  expect(
+    await rpc("agent.status", { agentId: source.id, messageId: "source-first" }),
+  ).toMatchObject({
+    assistantReply: { text: selected, truncated: false },
+  });
+  expect(
+    await rpc("agent.status", { agentId: source.id, messageId: "source-later" }),
+  ).toMatchObject({
+    assistantReply: { text: later, truncated: false },
+  });
+  expect(
+    await rpc("agent.status", { agentId: source.id, messageId: "not-this-turn" }),
+  ).toMatchObject({
+    assistantReply: null,
+  });
+
   const captured = captureCompositionResult.output.parse(
     await rpc("composition.result.capture", {
       agentId: source.id,

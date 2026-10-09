@@ -26,6 +26,18 @@ type Binding = z.infer<typeof bindingSchema>;
 import { createFamiliarCommandRunner, type FamiliarCommandRunner } from "./familiarCommandRunner.js";
 export { createFamiliarCommandRunner, type FamiliarCommandRunner } from "./familiarCommandRunner.js";
 
+export function formatFamiliarResponse(result: unknown, status: unknown): string {
+  const observation = z.object({ status: z.string().optional() }).parse(result);
+  const native = z.object({ status: z.string(), permissions: z.array(z.unknown()).default([]), assistantReply: z.object({ text: z.string(), truncated: z.boolean() }).nullable().optional() }).parse(status);
+  if (native.permissions.length) return "The agent needs your approval. Open FamiliarAgent to review it, or use !fa status.";
+  if (native.status === "idle" && observation.status === "idle") {
+    if (native.assistantReply?.text.trim()) return native.assistantReply.text + (native.assistantReply.truncated ? "\n\n[Response shortened. Open FamiliarAgent to read the full answer.]" : "");
+    return "The agent finished. Open FamiliarAgent to read the response; this connector could not identify the complete reply for this message.";
+  }
+  if (native.status === "running" || observation.status === "timeout") return "The agent is still working. Use !fa status for progress, or open FamiliarAgent.";
+  return "The agent needs attention. Open FamiliarAgent to inspect the session, or use !fa status.";
+}
+
 export function createFamiliarMessageHandler(config: FamiliarConfig, run: FamiliarCommandRunner = createFamiliarCommandRunner(config.cliPath)) {
   let activeWaits = 0;
   const attachments = createIncomingAttachmentStore({ rootPath: path.join(config.stateDirectory, "incoming"), maxBytesPerFile: 4 * 1024 * 1024, maxTotalBytes: 16 * 1024 * 1024, maxFiles: 10 });
@@ -134,6 +146,8 @@ export function createFamiliarMessageHandler(config: FamiliarConfig, run: Famili
       if (command.startsWith("!fa")) { await reply(message, "Unknown FamiliarAgent command. Use !fa help."); return; }
       if (!message.messageId || !/^\d+$/.test(message.messageId)) throw new Error("A durable Discord message ID is required");
       if (activeWaits >= config.maxActiveWaits) { await reply(message, "The connector is handling its maximum number of active requests. Use !fa status or try again later."); return; }
+      activeWaits += 1;
+      try {
       const directory = path.join(config.stateDirectory, "receipts");
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const file = path.join(directory, `${message.messageId}.json`);
@@ -143,8 +157,6 @@ export function createFamiliarMessageHandler(config: FamiliarConfig, run: Famili
       }
       try { await writeFile(file, JSON.stringify({ state: "dispatching", agentId: binding.agentId, messageId: message.messageId }), { flag: "wx", mode: 0o600 }); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; await reply(message, "This message was already recorded and will not be executed again. Use !fa status to inspect the native session."); return; }
-      activeWaits += 1;
-      try {
         let text = message.content;
         if (message.attachments?.length) {
           const files = await attachments.materialize({ messageId: message.messageId, attachments: message.attachments });
@@ -156,11 +168,11 @@ export function createFamiliarMessageHandler(config: FamiliarConfig, run: Famili
         }
         await rpc(binding, "agent.send", { agentId: binding.agentId, text, messageId: `discord-${message.messageId}` });
         await receipt(file, { state: "accepted", agentId: binding.agentId, messageId: message.messageId });
-        await reply(message, `Accepted by native agent ${binding.agentId}. Use !fa status for progress or !fa stop to interrupt.`).catch(() => {});
+        await reply(message, "Message sent. I’ll post the response here. Use !fa status for progress or !fa stop to interrupt.").catch(() => {});
         const result = await run(["agent", "wait", binding.agentId, "--timeout", `${config.waitTimeoutSeconds}s`, "--host", binding.host, "--json"], (config.waitTimeoutSeconds + 30) * 1000);
-        const status = await rpc(binding, "agent.status", { agentId: binding.agentId });
+        const status = await rpc(binding, "agent.status", { agentId: binding.agentId, messageId: `discord-${message.messageId}` });
         await receipt(file, { state: "observed", result, status, delivery: "pending" });
-        await reply(message, JSON.stringify({ result, status }, null, 2));
+        await reply(message, formatFamiliarResponse(result, status));
         await receipt(file, { state: "observed", result, status, delivery: "delivered" });
       } catch (error) {
         // A lost acknowledgement is ambiguous. Never automatically run the prompt again.
@@ -175,8 +187,11 @@ export function createFamiliarMessageHandler(config: FamiliarConfig, run: Famili
 
 export async function startFamiliarBot(token: string, configPath: string): Promise<void> {
   const config = familiarConfigSchema.parse(JSON.parse(await readFile(configPath, "utf8")));
+  await startConfiguredFamiliarBot(token, config);
+}
+
+export async function startConfiguredFamiliarBot(token: string, config: FamiliarConfig, runner = createFamiliarCommandRunner(config.cliPath)): Promise<void> {
   const client = createDiscordClient();
-  const runner = createFamiliarCommandRunner(config.cliPath);
   attachDiscordMessageHandler(client, createFamiliarMessageHandler(config, runner));
   const stop = () => { client.destroy(); void runner.close(); };
   process.once("SIGTERM", stop);

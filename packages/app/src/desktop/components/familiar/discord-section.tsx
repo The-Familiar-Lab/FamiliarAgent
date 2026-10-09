@@ -11,6 +11,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import type { Agent } from "@/stores/session-store";
 import type { HostProfile } from "@/types/host-connection";
+import { DiscordSourceFields } from "./discord-source-fields";
 
 interface Binding {
   channelId: string;
@@ -18,6 +19,7 @@ interface Binding {
   agentId?: string;
   sessionId?: string;
   allowedUserIds: string[];
+  allowedRoleIds?: string[];
   sharedWorkspace: string;
 }
 const logicalCatalog = z.object({
@@ -29,7 +31,18 @@ interface LogicalChoice {
   host: string;
   label: string;
 }
+interface Source {
+  sshEndpoint: string;
+  configPath: string;
+}
+interface SourceInventory {
+  guild: { id: string; name: string };
+  allowedRoleIds: string[];
+  channels: { id: string; name: string }[];
+  createdChannelId?: string;
+}
 interface Status {
+  source?: Source;
   bindings: Binding[];
   tokenSet: boolean;
   state: string;
@@ -49,6 +62,32 @@ function canConnect(
     status.state === "stopped" &&
     bindings === status.bindings &&
     !token
+  );
+}
+function canAddBinding(
+  editing: boolean,
+  host: string,
+  agentId: string,
+  sessionId: string,
+  channelId: string,
+  users: string,
+  source: Source | undefined,
+  inventory: SourceInventory | null,
+): boolean {
+  if (!editing || !host || (!agentId && !sessionId.trim()) || !/^\d+$/u.test(channelId))
+    return false;
+  return source ? Boolean(inventory?.allowedRoleIds.length) : /^\d+(\s*,\s*\d+)*$/u.test(users);
+}
+function readyToConnect(
+  status: Status | null,
+  busy: boolean,
+  bindings: Binding[],
+  token: string,
+  source?: Source,
+): boolean {
+  return (
+    canConnect(status, busy, bindings, source ? "" : token) &&
+    JSON.stringify(source) === JSON.stringify(status?.source)
   );
 }
 function endpoint(profile: HostProfile): string | null {
@@ -139,6 +178,8 @@ export function DiscordSection() {
   const [bindings, setBindings] = useState<Binding[]>([]);
   const [formRevision, setFormRevision] = useState(0);
   const [token, setToken] = useState("");
+  const [source, setSource] = useState<Source | undefined>();
+  const [inventory, setInventory] = useState<SourceInventory | null>(null);
   const [channelId, setChannelId] = useState("");
   const [users, setUsers] = useState("");
   const [host, setHost] = useState("");
@@ -151,6 +192,7 @@ export function DiscordSection() {
     const next = await invokeDesktopCommand<Status>("familiar_discord_status");
     setStatus(next);
     setBindings(next.bindings);
+    setSource(next.source);
   }, []);
   useEffect(() => {
     void refresh().catch((failure) => setError(String(failure)));
@@ -228,13 +270,19 @@ export function DiscordSection() {
         channelId,
         host,
         ...(sessionId.trim() ? { sessionId: sessionId.trim() } : { agentId }),
-        allowedUserIds: users.split(",").map((value) => value.trim()),
+        allowedUserIds: source
+          ? []
+          : users
+              .split(",")
+              .map((value) => value.trim())
+              .filter(Boolean),
+        allowedRoleIds: source ? (inventory?.allowedRoleIds ?? []) : [],
         sharedWorkspace: "main",
       },
     ]);
     setChannelId("");
     setFormRevision((value) => value + 1);
-  }, [channelId, host, agentId, sessionId, users]);
+  }, [channelId, host, agentId, sessionId, users, source, inventory]);
   const saveSettings = useCallback(() => {
     const servers = Object.fromEntries(
       hosts.flatMap((profile) => {
@@ -242,8 +290,9 @@ export function DiscordSection() {
         return address ? [[profile.serverId, address]] : [];
       }),
     );
-    void action("familiar_discord_save", { bindings, servers, ...(token ? { token } : {}) });
-  }, [action, bindings, token, hosts]);
+    const credentials = source ? { source } : { token };
+    void action("familiar_discord_save", { bindings, servers, ...credentials });
+  }, [action, bindings, token, hosts, source]);
   const connect = useCallback(() => {
     void action("familiar_discord_start");
   }, [action]);
@@ -253,6 +302,37 @@ export function DiscordSection() {
   const refreshStatus = useCallback(() => {
     void refresh().catch((failure) => setError(String(failure)));
   }, [refresh]);
+  const changeSource = useCallback((next?: Source) => {
+    setSource(next);
+    setInventory(null);
+  }, []);
+  const chooseChannel = useCallback((id: string) => {
+    setChannelId(id);
+    setFormRevision((value) => value + 1);
+  }, []);
+  const inspectSource = useCallback(
+    async (createChannel: boolean) => {
+      if (!source) return;
+      setBusy(true);
+      setError("");
+      try {
+        const next = await invokeDesktopCommand<SourceInventory>("familiar_discord_source", {
+          source,
+          createChannel,
+        });
+        setInventory(next);
+        if (next.createdChannelId) {
+          setChannelId(next.createdChannelId);
+          setFormRevision((value) => value + 1);
+        }
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [source],
+  );
   return (
     <SettingsSection title="Discord · AI Agent Discord Connector">
       <View style={[settingsStyles.card, CARD_STYLE]}>
@@ -264,24 +344,39 @@ export function DiscordSection() {
         <Text style={settingsStyles.rowTitle}>Status: {status?.state ?? "loading"}</Text>
         <Text style={settingsStyles.rowHint}>
           Enable Message Content Intent for your Discord bot, invite it to your server, then copy
-          your channel and user IDs using Discord Developer Mode. Only listed users can control the
-          bound session.
+          your channel and user IDs using Discord Developer Mode. Only listed users or the original
+          connector’s allowed roles can control the bound session.
         </Text>
-        <Field
-          label={
-            status?.tokenSet ? "Bot token (saved securely; enter only to replace)" : "Bot token"
-          }
-        >
-          <FormTextInput
-            accessibilityLabel="Discord bot token"
-            initialValue={token}
-            resetKey={formRevision}
-            onChangeText={setToken}
-            secureTextEntry
-            autoCapitalize="none"
-            editable={editing}
-          />
-        </Field>
+        <DiscordSourceFields
+          source={source}
+          inventory={inventory}
+          editing={editing}
+          revision={formRevision}
+          servers={hosts.flatMap((profile) => {
+            const address = endpoint(profile);
+            return address?.startsWith("ssh:") ? [{ label: profile.label, endpoint: address }] : [];
+          })}
+          onSource={changeSource}
+          onInspect={inspectSource}
+          onChannel={chooseChannel}
+        />
+        {!source ? (
+          <Field
+            label={
+              status?.tokenSet ? "Bot token (saved securely; enter only to replace)" : "Bot token"
+            }
+          >
+            <FormTextInput
+              accessibilityLabel="Discord bot token"
+              initialValue={token}
+              resetKey={formRevision}
+              onChangeText={setToken}
+              secureTextEntry
+              autoCapitalize="none"
+              editable={editing}
+            />
+          </Field>
+        ) : null}
         {bindings.map((binding) => (
           <BindingRow
             key={binding.channelId}
@@ -367,23 +462,26 @@ export function DiscordSection() {
             keyboardType="numeric"
           />
         </Field>
-        <Field label="Allowed Discord user IDs" hint="Separate multiple IDs with commas.">
-          <FormTextInput
-            accessibilityLabel="Allowed Discord user IDs"
-            initialValue={users}
-            resetKey={formRevision}
-            onChangeText={setUsers}
-            editable={editing}
-          />
-        </Field>
+        {!source ? (
+          <Field label="Allowed Discord user IDs" hint="Separate multiple IDs with commas.">
+            <FormTextInput
+              accessibilityLabel="Allowed Discord user IDs"
+              initialValue={users}
+              resetKey={formRevision}
+              onChangeText={setUsers}
+              editable={editing}
+            />
+          </Field>
+        ) : (
+          <Text style={settingsStyles.rowHint}>
+            Only the original connector’s allowed roles can use this channel. Load channels before
+            adding a binding.
+          </Text>
+        )}
         <Button
           variant="outline"
           disabled={
-            !editing ||
-            !host ||
-            (!agentId && !sessionId.trim()) ||
-            !/^\d+$/u.test(channelId) ||
-            !/^\d+(\s*,\s*\d+)*$/u.test(users)
+            !canAddBinding(editing, host, agentId, sessionId, channelId, users, source, inventory)
           }
           onPress={addBinding}
         >
@@ -393,7 +491,10 @@ export function DiscordSection() {
           <Button disabled={!editing} onPress={saveSettings}>
             Save Discord settings
           </Button>
-          <Button disabled={!canConnect(status, busy, bindings, token)} onPress={connect}>
+          <Button
+            disabled={!readyToConnect(status, busy, bindings, token, source)}
+            onPress={connect}
+          >
             Connect Discord
           </Button>
           <Button

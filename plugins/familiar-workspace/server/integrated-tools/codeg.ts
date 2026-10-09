@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ToolActionAdapter } from "../tool-actions/contracts.js";
 import {
   endpoint,
@@ -24,6 +25,13 @@ const connection = [
 export const codegAdapter: ToolActionAdapter = {
   id: "codeg",
   actions: [
+    {
+      id: "prepare-agent",
+      label: "Install Codeg agent",
+      description:
+        "Install the selected original ACP adapter through Codeg's native installer. Start the Codeg server first; sign-in remains owned by the selected agent.",
+      parameters: [...connection, { key: "agentType", label: "Codeg agent type", required: true }],
+    },
     {
       id: "list",
       mutates: false,
@@ -60,13 +68,35 @@ export const codegAdapter: ToolActionAdapter = {
   async execute(request, context) {
     const url = parameter(request, "url");
     const token = await tokenFile(parameter(request, "tokenFile"));
-    const call = (path: string, body: unknown) =>
+    const call = (path: string, body: unknown, timeoutMs?: number) =>
       jsonRequest(context, {
         url: endpoint(url, `/api${path}`),
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body,
+        ...(timeoutMs ? { timeoutMs } : {}),
       });
+    if (request.action === "prepare-agent") {
+      const installed = await call(
+        "/acp_prepare_npx_agent",
+        {
+          agentType: parameter(request, "agentType"),
+          registryVersion: null,
+          version: null,
+          cleanFirst: false,
+          taskId: randomUUID(),
+        },
+        180_000,
+      );
+      if (typeof installed !== "string" || !installed.trim())
+        throw new Error(
+          "Codeg did not return an installed native ACP adapter. Check the original server before retrying.",
+        );
+      return result({
+        installed,
+        note: "Native ACP adapter installed. Authenticate its original agent before sending a model request.",
+      });
+    }
     if (request.action === "list")
       return result(await call("/list_all_conversations", { includeChildren: true }));
     if (request.action === "create") {

@@ -2,6 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useHubController, type HubProps } from "./controller.js";
+import { readSetupReturn, saveSetupReturn } from "./setup-return.js";
 import type { CompositionProject, CompositionSession } from "../../shared/composition.js";
 import type { ToolEntry } from "../../shared/tool-catalog.js";
 const mocks = vi.hoisted(() => ({
@@ -94,6 +95,7 @@ const props = {
 } as unknown as HubProps;
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   mocks.connectSources.mockReset().mockResolvedValue(undefined);
   mocks.hosts[0]!.status = "online";
   mocks.refreshAgent.mockResolvedValue({
@@ -130,6 +132,8 @@ beforeEach(() => {
           };
         case "resources.save":
           return { ...input, revision: 2 };
+        case "composition.project.read":
+          return project;
         case "composition.project.save":
           return { ...project, ...input, revision: 2 };
         case "composition.create":
@@ -474,4 +478,201 @@ describe("Familiar Hub action wiring", () => {
     ).toBe(1);
     expect(result.current.resources?.revision).toBe(2);
   });
+});
+
+describe("native setup return navigation", () => {
+  it("restores the same logical session, project, host and tool in a newly opened global Hub", async () => {
+    const first = renderHook(() => useHubController(props));
+    await act(async () => {
+      first.result.current.setProject(project);
+      first.result.current.setSession(session);
+      first.result.current.setTarget("linux");
+      first.result.current.setCwd("/remote/project");
+      first.result.current.setTitle("Working name");
+      first.result.current.setTab("Tools");
+    });
+    act(() => first.result.current.rememberSetupReturn("linux", "aider"));
+    first.unmount();
+    const next = renderHook(() =>
+      useHubController({ ...props, host: { id: "linux" } } as HubProps),
+    );
+    await waitFor(() => expect(next.result.current.session?.id).toBe(session.id));
+    expect(next.result.current.host.id).toBe("mac");
+    expect(next.result.current.project?.id).toBe(project.id);
+    expect(next.result.current.target).toBe("linux");
+    expect(next.result.current.toolId).toBe("aider");
+    expect(next.result.current.cwd).toBe("/remote/project");
+    expect(next.result.current.title).toBe("Working name");
+    expect(next.result.current.tab).toBe("Tools");
+    expect(readSetupReturn("mac")).toBeNull();
+    expect(calls("composition.create")).toHaveLength(0);
+    expect(mocks.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a manual Clear selection with a delayed setup restore", async () => {
+    saveSetupReturn("mac", {
+      projectId: project.id,
+      sessionId: session.id,
+      target: "linux",
+      toolId: "aider",
+      cwd: "/remote/project",
+      title: "A",
+      tab: "Tools",
+    });
+    let resolveSession: ((value: CompositionSession) => void) | undefined;
+    const original = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation((host, contract, input) =>
+      contract.name === "composition.read"
+        ? new Promise((resolve) => {
+            resolveSession = resolve;
+          })
+        : original(host, contract, input),
+    );
+    const { result } = renderHook(() => useHubController(props));
+    await waitFor(() => expect(resolveSession).toBeDefined());
+    act(() => {
+      result.current.setProject(null);
+      result.current.setSession(null);
+      result.current.setCwd("/manual-choice");
+    });
+    await act(async () => resolveSession!(session));
+    expect(result.current.project).toBeNull();
+    expect(result.current.session).toBeNull();
+    expect(result.current.cwd).toBe("/manual-choice");
+    expect(readSetupReturn("mac")).toBeNull();
+  });
+
+  it("keeps an explicit native conversation entry ahead of a saved setup bookmark", async () => {
+    saveSetupReturn("mac", {
+      projectId: project.id,
+      sessionId: "saved-session",
+      target: "linux",
+      toolId: "aider",
+      cwd: "/remote/project",
+      title: "A",
+      tab: "Tools",
+    });
+    const original = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation((host, contract, input) =>
+      contract.name === "composition.list"
+        ? Promise.resolve({
+            projects: [project],
+            sessions: [
+              {
+                ...session,
+                id: "explicit-session",
+                endpoints: [{ kind: "agent", serverId: "mac", agentId: "explicit-agent" }],
+              },
+            ],
+            total: 1,
+          })
+        : original(host, contract, input),
+    );
+    const { result } = renderHook(() =>
+      useHubController({ ...props, params: { agentId: "explicit-agent" } }),
+    );
+    await waitFor(() => expect(result.current.session?.id).toBe("explicit-session"));
+    expect(calls("composition.read").map((call) => call[2].id)).not.toContain("saved-session");
+    expect(mocks.createAgent).not.toHaveBeenCalled();
+  });
+});
+
+it("waits for the catalog to reconnect before reading a setup return bookmark", async () => {
+  saveSetupReturn("mac", {
+    projectId: project.id,
+    sessionId: session.id,
+    target: "linux",
+    toolId: "aider",
+    cwd: "/remote/project",
+    title: "A",
+    tab: "Tools",
+  });
+  mocks.hosts[0]!.status = "offline";
+  const { result, rerender } = renderHook(() => useHubController(props));
+  await act(async () => undefined);
+  expect(calls("composition.read")).toHaveLength(0);
+  expect(result.current.session).toBeNull();
+  expect(readSetupReturn("mac")).not.toBeNull();
+  mocks.hosts[0]!.status = "online";
+  rerender();
+  await waitFor(() => expect(result.current.session?.id).toBe(session.id));
+  expect(calls("composition.read")).toHaveLength(1);
+  expect(readSetupReturn("mac")).toBeNull();
+});
+
+it("does not restore after Manual Clear while the catalog is offline", async () => {
+  saveSetupReturn("mac", {
+    projectId: project.id,
+    sessionId: session.id,
+    target: "linux",
+    toolId: "aider",
+    cwd: "/remote/project",
+    title: "A",
+    tab: "Tools",
+  });
+  mocks.hosts[0]!.status = "offline";
+  const { result, rerender } = renderHook(() => useHubController(props));
+  act(() => {
+    result.current.setProject(null);
+    result.current.setSession(null);
+  });
+  mocks.hosts[0]!.status = "online";
+  rerender();
+  await act(async () => undefined);
+  expect(result.current.session).toBeNull();
+  expect(calls("composition.read")).toHaveLength(0);
+  expect(readSetupReturn("mac")).toBeNull();
+});
+
+it("allows Clear selection and fresh navigation after a corrupt setup bookmark", async () => {
+  saveSetupReturn("mac", {
+    projectId: project.id,
+    sessionId: session.id,
+    target: "linux",
+    toolId: "aider",
+    cwd: "/remote/project",
+    title: "A",
+    tab: "Tools",
+  });
+  localStorage.setItem(localStorage.key(0)!, "{invalid JSON");
+  const { result } = renderHook(() => useHubController(props));
+  await waitFor(() => expect(result.current.error).not.toBe(""));
+  act(() => {
+    result.current.setProject(null);
+    result.current.setSession(null);
+    result.current.setCwd("/fresh-selection");
+    result.current.setTab("Tools");
+  });
+  expect(result.current.project).toBeNull();
+  expect(result.current.session).toBeNull();
+  expect(result.current.cwd).toBe("/fresh-selection");
+  expect(result.current.tab).toBe("Tools");
+  expect(readSetupReturn("mac")).toBeNull();
+});
+
+it("keeps ordinary navigation usable when browser storage is blocked", async () => {
+  const blocked = vi.spyOn(globalThis, "localStorage", "get").mockImplementation(() => {
+    throw new Error("Storage is blocked");
+  });
+  try {
+    const { result } = renderHook(() => useHubController(props));
+    await waitFor(() => expect(result.current.error).toBe("Storage is blocked"));
+    act(() => {
+      result.current.setProject(null);
+      result.current.setSession(null);
+      result.current.setTarget("linux");
+      result.current.setCwd("/fresh-selection");
+      result.current.setToolId("goose");
+      result.current.setTab("Tools");
+    });
+    expect(result.current.target).toBe("linux");
+    expect(result.current.cwd).toBe("/fresh-selection");
+    expect(result.current.toolId).toBe("goose");
+    expect(result.current.tab).toBe("Tools");
+    expect(() => result.current.rememberSetupReturn("linux", "goose")).toThrow(
+      "Storage is blocked",
+    );
+  } finally {
+    blocked.mockRestore();
+  }
 });

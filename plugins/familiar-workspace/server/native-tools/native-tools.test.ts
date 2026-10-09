@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,6 +75,30 @@ describe("native tools", () => {
     });
     expect(exec.mock.calls[0]![0].args).not.toContain(request.input);
     expect(exec.mock.calls[0]![0].env).toMatchObject({ AIDER_YES_ALWAYS: "false" });
+  });
+  it("passes only a private environment path to native Aider and rejects public or linked files", async () => {
+    const filename = path.join(root, "provider's key.env");
+    const secret = "private-test-key";
+    await writeFile(filename, `OPENAI_API_KEY=${secret}\n`, { mode: 0o600 });
+    exec.mockResolvedValue({ stdout: "", stderr: "", exitCode: 7 });
+    await expect(
+      aiderAdapter.execute({ ...request, parameters: { envFile: filename } }, context),
+    ).rejects.toThrow("code 7");
+    const command = exec.mock.calls[0]![0];
+    expect(command.args[command.args.indexOf("--env-file") + 1]).toBe(filename);
+    expect(JSON.stringify(command)).not.toContain(secret);
+    exec.mockClear();
+    await chmod(filename, 0o644);
+    await expect(
+      aiderAdapter.execute({ ...request, parameters: { envFile: filename } }, context),
+    ).rejects.toThrow("0600");
+    await chmod(filename, 0o600);
+    const link = path.join(root, "linked.env");
+    await symlink(filename, link);
+    await expect(
+      aiderAdapter.execute({ ...request, parameters: { envFile: link } }, context),
+    ).rejects.toThrow("regular file");
+    expect(exec).not.toHaveBeenCalled();
   });
   it("fails native nonzero exits without leaking native stderr into errors", async () => {
     exec.mockResolvedValue({ stdout: "", stderr: "secret token", exitCode: 4 });
@@ -297,6 +321,18 @@ describe("native tools", () => {
         context,
       ),
     ).rejects.toThrow("Deadline");
+  });
+  it("dispatches the original queue without a PTY and with a workflow-sized deadline", async () => {
+    await superharnessAdapter.execute(
+      { ...request, action: "dispatch", parameters: { permissionMode: "bypassPermissions" } },
+      context,
+    );
+    const command = exec.mock.calls[0]![0];
+    expect(command.args).toContain("1800");
+    expect(command.timeoutMs).toBe(1810000);
+    expect(command.env).toMatchObject({ SUPERHARNESS_NO_PTY_WRAP: "1" });
+    await superharnessAdapter.execute({ ...request, action: "status" }, context);
+    expect(exec.mock.calls[1]![0].args).toContain("--include-subtasks");
   });
   async function squadFixture(): Promise<ToolActionRequest> {
     const worktree = path.join(root, "worktree");

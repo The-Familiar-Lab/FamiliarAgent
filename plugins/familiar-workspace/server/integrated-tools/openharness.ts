@@ -1,5 +1,5 @@
 import type { ToolActionAdapter } from "../tool-actions/contracts.js";
-import { cli, integer, parameter } from "./common.js";
+import { cli, integer, parameter, record } from "./common.js";
 
 const command = {
   key: "command",
@@ -36,7 +36,7 @@ export const openHarnessAdapter: ToolActionAdapter = {
       parameters: [command, { key: "agent", label: "Native agent name", required: true }],
     },
   ],
-  execute(request, context) {
+  async execute(request, context) {
     if (request.action === "status")
       return cli(request, context, "harness", ["auth", "status", "--json"]);
     if (request.action === "search")
@@ -46,14 +46,31 @@ export const openHarnessAdapter: ToolActionAdapter = {
         `--limit=${integer(request.parameters.limit, 30, 100)}`,
         "--json",
       ]);
-    if (request.action === "run")
-      return cli(
+    if (request.action === "run") {
+      const response = await cli(
         request,
         context,
         "harness",
-        ["new", parameter(request, "agent"), request.cwd, "--", request.input],
+        [
+          "new",
+          parameter(request, "agent"),
+          request.cwd,
+          "--mode",
+          "ask",
+          "--json",
+          "--",
+          request.input,
+        ],
         "submitted",
       );
+      const output = record(JSON.parse(response.text));
+      const agent = output.agent && typeof output.agent === "object" ? record(output.agent) : {};
+      if (output.ok !== true || typeof agent.id !== "string" || !agent.id)
+        throw new Error(
+          "OpenHarness did not acknowledge a new native agent. Check native sign-in and daemon status before retrying.",
+        );
+      return { ...response, nativeId: agent.id };
+    }
     throw new Error("Unknown Harness action.");
   },
 };

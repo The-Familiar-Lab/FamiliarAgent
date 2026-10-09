@@ -98,7 +98,10 @@ export function NativeToolActions({
             <View key={definition.toolId}>
               {ui.button(
                 definition.toolId,
-                () => selectTool(definition.toolId),
+                () => {
+                  selectTool(definition.toolId);
+                  hub.openSetup(hub.target, definition.toolId);
+                },
                 false,
                 toolId === definition.toolId,
               )}

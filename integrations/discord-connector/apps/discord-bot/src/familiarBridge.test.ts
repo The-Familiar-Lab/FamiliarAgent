@@ -132,3 +132,43 @@ it("rejects oversized CLI output without keeping its producer alive", async () =
   try {pid=await readOwnedPid(file);expect(String(await result)).toContain("exceeds 8 MiB");expect(()=>process.kill(pid!,0)).toThrow();}
   finally {await runner.close();killOwnedPid(pid);}
 });
+it("reserves its active request slot before asynchronous receipt setup", async () => {
+  config.maxActiveWaits = 1;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const run = vi.fn(async (args: string[]) => {
+    if (args[3] === "agent.send") await gate;
+    return args[0] === "plugin" ? { result: { status: "idle" } } : { status: "idle" };
+  });
+  const handler = createFamiliarMessageHandler(config, run);
+  const first = handler(message());
+  const second = message({ messageId: "301" });
+  try {
+    await handler(second);
+    expect(second.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("maximum number") }));
+  } finally { release(); await first; }
+});
+it("posts the exact native assistant response instead of the observed CLI JSON envelope", async () => {
+  const final = "FAMILIAR_DISCORD_LIVE_OK";
+  const statusInputs: unknown[] = [];
+  const run = vi.fn(async (args: string[]) => {
+    if (args[0] !== "plugin") return { agentId: "native-agent", status: "idle", message: `Agent is idle.\nLast 5 activity items:\n[User] test prompt\n${final}` };
+    if (args[3] === "agent.status") {
+      statusInputs.push(JSON.parse(await readFile(args[5], "utf8")));
+      return { result: { agentId: "native-agent", status: "idle", permissions: [], recent: ["test prompt", final], assistantReply: { text: final, truncated: false } } };
+    }
+    return { result: { accepted: true } };
+  });
+  const item = message(); await createFamiliarMessageHandler(config, run)(item);
+  expect(statusInputs).toEqual([{ agentId: "native-agent", messageId: "discord-300" }]);
+  expect(item.reply).toHaveBeenLastCalledWith({ content: final, embeds: [], allowedMentions: { parse: [] } });
+});
+it("does not pass CLI diagnostic text or a previous untyped history entry off as the current reply", async () => {
+  const run = vi.fn(async (args: string[]) => args[0] !== "plugin"
+    ? { status: "idle", message: "Agent is idle.\n[User] private prompt\nold answer" }
+    : { result: args[3] === "agent.status" ? { status: "idle", recent: ["old answer"], assistantReply: null } : { accepted: true } });
+  const item = message(); await createFamiliarMessageHandler(config, run)(item);
+  expect(item.reply).toHaveBeenLastCalledWith(expect.objectContaining({ content: expect.stringContaining("could not identify") }));
+  expect(JSON.stringify(vi.mocked(item.reply).mock.calls)).not.toContain("private prompt");
+  expect(JSON.stringify(vi.mocked(item.reply).mock.calls)).not.toContain("old answer");
+});

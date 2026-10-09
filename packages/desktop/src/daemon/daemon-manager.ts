@@ -425,6 +425,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     familiar_release_remote_web: (args) => remoteWebForwards.close(args),
     familiar_discord_status: () => discordConnection.status(),
     familiar_discord_save: (args) => discordConnection.save(args),
+    familiar_discord_source: (args) => discordConnection.inspectSource(args),
     familiar_discord_start: async () => {
       await discordConnection.start();
       return discordConnection.status();

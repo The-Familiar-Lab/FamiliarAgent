@@ -68,10 +68,15 @@ beforeEach(() => {
   );
 });
 afterEach(cleanup);
-function useForm(target = "mac", asInput = false) {
+function useForm(
+  target = "mac",
+  asInput = false,
+  toolSettingsVersions: Record<string, number> = {},
+) {
   const [value, setSession] = useState<CompositionSession | null>(null);
   const hub = {
     target,
+    toolSettingsVersions,
     cwd: "/project",
     title: "A",
     session: value,
@@ -193,4 +198,51 @@ it("only offers genuine prompt actions when mapping a selected result", async ()
   await waitFor(() => expect(result.current.definitions).toHaveLength(1));
   act(() => result.current.selectTool("codeg"));
   expect(result.current.actions.map((action) => action.id)).toEqual(["send"]);
+});
+
+it("reloads applied setup settings only for the selected host and tool", async () => {
+  let savedUrl = "http://native";
+  const original = mocks.rpc.getMockImplementation()!;
+  mocks.rpc.mockImplementation((host, contract, ...rest) =>
+    contract.name === "tools.action-settings.read"
+      ? Promise.resolve({ parameters: { url: savedUrl } })
+      : original(host, contract, ...rest),
+  );
+  const { result, rerender } = renderHook(({ versions }) => useForm("mac", false, versions), {
+    initialProps: { versions: {} as Record<string, number> },
+  });
+  await choose(result);
+  expect(result.current.parameters).toEqual({ url: "http://native" });
+  act(() => result.current.setParameters({ url: "http://unsaved-draft" }));
+  savedUrl = "http://newly-configured";
+  rerender({ versions: { "mac:codeg": 1 } });
+  await waitFor(() =>
+    expect(result.current.parameters).toEqual({ url: "http://newly-configured" }),
+  );
+  const reads = mocks.rpc.mock.calls.filter(
+    (call) => call[1].name === "tools.action-settings.read",
+  );
+  expect(reads).toHaveLength(2);
+  expect(reads[1]).toEqual([
+    "mac",
+    expect.objectContaining({ name: "tools.action-settings.read" }),
+    { toolId: "codeg", action: "send" },
+  ]);
+  expect(result.current.nativeId).toBe("native-1");
+  expect(result.current.input).toBe("selected result");
+});
+
+it("keeps unsaved action settings on ordinary renders and another host or tool setup", async () => {
+  const { result, rerender } = renderHook(({ versions }) => useForm("mac", false, versions), {
+    initialProps: { versions: { "mac:codeg": 1 } as Record<string, number> },
+  });
+  await choose(result);
+  act(() => result.current.setParameters({ url: "http://unsaved-draft" }));
+  rerender({ versions: { "mac:codeg": 1 } });
+  rerender({ versions: { "mac:codeg": 1, "linux:codeg": 2, "mac:aider": 3 } });
+  await act(async () => undefined);
+  expect(result.current.parameters).toEqual({ url: "http://unsaved-draft" });
+  expect(
+    mocks.rpc.mock.calls.filter((call) => call[1].name === "tools.action-settings.read"),
+  ).toHaveLength(1);
 });

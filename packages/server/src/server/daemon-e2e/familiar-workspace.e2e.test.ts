@@ -70,4 +70,16 @@ test("two real clients share plugin state, reject stale writes and transfer veri
   await expect(
     other.invokePluginRpc("familiar-workspace", "provider.setup", { provider: "codex; evil" }),
   ).rejects.toThrow();
+  const setup = await other.invokePluginRpc("familiar-workspace", "tools.setup.status", {
+    id: "aider",
+  });
+  expect(setup).toMatchObject({ toolId: "aider", account: "not-checked" });
+  await expect(
+    other.invokePluginRpc("familiar-workspace", "tools.setup.prepare", {
+      id: "aider",
+      action: "api-key",
+      provider: "openai",
+      key: "must-not-be-accepted",
+    }),
+  ).rejects.toThrow();
 }, 30000);

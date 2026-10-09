@@ -67,7 +67,9 @@ export const listSpaces = defineRpc({
 
 export const agentStatus = defineRpc({
   name: "agent.status",
-  input: z.object({ agentId: z.string().min(1) }).strict(),
+  input: z
+    .object({ agentId: z.string().min(1), messageId: z.string().min(1).max(160).optional() })
+    .strict(),
   output: z.object({
     agentId: z.string(),
     provider: z.string(),
@@ -75,6 +77,7 @@ export const agentStatus = defineRpc({
     cwd: z.string(),
     permissions: z.array(z.unknown()),
     recent: z.array(z.string()),
+    assistantReply: z.object({ text: z.string(), truncated: z.boolean() }).nullable().optional(),
   }),
 });
 export const agentSend = defineRpc({

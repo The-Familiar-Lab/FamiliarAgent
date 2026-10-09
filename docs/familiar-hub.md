@@ -47,9 +47,9 @@ A fork stores its parent revision and history boundaries instead of duplicating 
 
 ## Tools and screens
 
-**Tools** can open native terminal and web interfaces inside FamiliarAgent, open installed desktop applications, register a command or URL, and offer supported install recipes. **Ask agent to set up** delegates an explicit setup task to a real native agent.
+**Tools** can open native terminal and web interfaces inside FamiliarAgent, open installed desktop applications, and register a command or URL. **Set up / Sign in** opens the selected server’s installation and authentication steps; selecting a session tool also opens this dialog. Choose **Install**, complete the original terminal flow, then **Check setup → Use in this session**. Installation and account readiness are separate. **Ask agent to set up** delegates additional prerequisites to a real native agent. See the [native tool guide](native-tool-actions.md) for exact provider steps and the verified Mac/Ubuntu setup matrix.
 
-The catalog distinguishes 9 CLI entries, 6 desktop-app entries and 9 reference entries. A reference entry requires its own command or URL configuration. A catalog entry does not imply complete compatibility with every feature of that project.
+The catalog distinguishes native chat, terminal, web, desktop and reference surfaces. Seventeen native-action adapters expose 85 explicit operations; their original tool owns execution and orchestration. A catalog entry or installed binary does not imply complete compatibility or authentication for every feature.
 
 - Claude/Codex native sessions and supported CLI launches receive the common session MCP configuration.
 - Goose receives a per-launch extension without overwriting its global profile.
@@ -69,7 +69,7 @@ Data uses `~/.local/share/familiaragent/` on Mac and Linux. The macOS app is `/A
 
 ## Discord and advanced configuration
 
-Discord is an optional entry point through AI Agent Discord Connector. A channel can follow a logical session's active native agent after a tool switch. Terminal and web interfaces do not automatically acquire a native chat/approval API.
+Discord is an optional entry point through AI Agent Discord Connector. In **Settings → Integrations**, a channel can follow a logical session's active native agent after a tool switch. Existing connector tokens can remain in their original private files on an SSH server; a separate role-restricted channel keeps the original bot and channels intact. See [Discord shared sessions](discord-shared-sessions.md). Terminal and web interfaces do not automatically acquire a native chat/approval API.
 
 Advanced settings expose authority routing, resource mappings and limits. Cross-server readers receive access only to the selected source references and sessions. Saved connections are restored once when the daemon starts and renewed when the relevant session is opened or changed. An offline source can make its original history unavailable.
 
@@ -79,6 +79,6 @@ Selected-result validation covers actual Mac Codex → Ubuntu Claude → Mac Cod
 
 The earlier release validation includes actual Mac Codex and Ubuntu Claude using the same logical session, reading original history through MCP, updating shared memory, and creating a pointer fork. Archived original conversations remained readable after daemon restart without manually renewing the connection. The installed Hub also forked a Mac session to a native Ubuntu Claude chat; destination model and thinking settings were retained. Explicitly unstarted Codex sessions recovered after restart without resetting their logical identity, workspace or MCP configuration. Native Git worktrees, terminal execution and bounded history reading have separate automated and live checks.
 
-The initial live fork manifest was 1,155 bytes; this is one measured case, not a constant size guarantee. Resource measurements and passing fixtures do not establish every tool/account combination. Real Discord account operation, user-provided ChatGPT exports and closed harness internals require separate validation.
+The initial live fork manifest was 1,155 bytes; this is one measured case, not a constant size guarantee. Resource measurements and passing fixtures do not establish every tool/account combination. An authorized message sent through the signed-in Discord UI completed Gateway → Mac relay → Ubuntu Codex → Discord, with a delivered receipt and matching native reply. This verifies that conversation path, not every Discord command or tool combination. User-provided ChatGPT exports and closed harness internals require separate validation.
 
 Provider-private heap state, model KV caches, credentials and unpublished orchestration checkpoints are not portable across arbitrary tools. Original source files and the owning server remain necessary for uncopied history.

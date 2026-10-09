@@ -51,21 +51,19 @@ function ToolCard({
         {tool.capabilities.join(" · ")} · {availability(tool)}
       </Text>
       <View style={ROW}>
+        {ui.button("Set up / Sign in", () => hub.openSetup(serverId, tool.id))}
         {hasActions
           ? ui.button("Run actions", () => {
-              hub.setTarget(serverId);
-              hub.setToolId(tool.id);
+              hub.openSetup(serverId, tool.id);
             })
           : null}
         {tool.nativeProvider
           ? ui.button(
               "Use in session",
               () => {
-                hub.setTarget(serverId);
-                hub.setToolId(tool.id);
-                hub.setTab("Sessions");
+                hub.openSetup(serverId, tool.id);
               },
-              !tool.installed,
+              false,
             )
           : null}
         {tool.modes
@@ -82,8 +80,8 @@ function ToolCard({
               )}
             </View>
           ))}
-        {tool.installAvailable
-          ? ui.button("Install", () => launch("install"), !usableFolder)
+        {tool.installAvailable && !tool.installed
+          ? ui.button("Install", () => hub.openSetup(serverId, tool.id))
           : null}
         {ui.button("Ask agent to set up", ask, !usableFolder)}
         {tool.sourceUrl ? ui.button("Project website", website) : null}

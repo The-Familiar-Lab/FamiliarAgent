@@ -37,6 +37,36 @@ afterEach(async () => {
 });
 
 describe("native tool boundaries", () => {
+  it("installs Codeg's original ACP adapter without silently cleaning existing native files", async () => {
+    const path = join(root, "codeg-token");
+    await writeFile(path, "private-test-token");
+    vi.mocked(context.request).mockResolvedValue({
+      status: 200,
+      body: JSON.stringify("/native/agent-entry"),
+    });
+    const result = await run("codeg", "prepare-agent", {
+      parameters: { url: "http://127.0.0.1:3000", tokenFile: path, agentType: "claude_code" },
+    });
+    expect(result.state).toBe("completed");
+    expect(context.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 180_000,
+        body: {
+          agentType: "claude_code",
+          cleanFirst: false,
+          registryVersion: null,
+          version: null,
+          taskId: expect.any(String),
+        },
+      }),
+    );
+    vi.mocked(context.request).mockResolvedValue({ status: 200, body: "null" });
+    await expect(
+      run("codeg", "prepare-agent", {
+        parameters: { url: "http://127.0.0.1:3000", tokenFile: path, agentType: "claude_code" },
+      }),
+    ).rejects.toThrow("did not return an installed");
+  });
   it("passes Orca input as one literal argv and reports submission, not completion", async () => {
     const result = await run("orca", "send", { nativeId: "term-1" });
     expect(result.state).toBe("submitted");
@@ -211,11 +241,31 @@ describe("native tool boundaries", () => {
     expect(entries).not.toContain(".familiar-active");
   });
   it("uses Harness's native argument separator for literal task input", async () => {
-    await run("openharness", "run", { parameters: { agent: "claude" } });
+    vi.mocked(context.exec).mockResolvedValue({
+      stdout: JSON.stringify({ ok: true, agent: { id: "original-agent" } }),
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await run("openharness", "run", { parameters: { agent: "claude" } });
+    expect(result).toMatchObject({ state: "submitted", nativeId: "original-agent" });
     expect(context.exec).toHaveBeenCalledWith(
       expect.objectContaining({
-        args: ["new", "claude", root, "--", "selected result; $(not-a-shell)"],
+        args: [
+          "new",
+          "claude",
+          root,
+          "--mode",
+          "ask",
+          "--json",
+          "--",
+          "selected result; $(not-a-shell)",
+        ],
       }),
+    );
+  });
+  it("does not claim Harness accepted an unacknowledged native agent", async () => {
+    await expect(run("openharness", "run", { parameters: { agent: "claude" } })).rejects.toThrow(
+      "did not acknowledge",
     );
   });
   it("rejects credential-bearing URLs and multiline or oversized credential files", async () => {
