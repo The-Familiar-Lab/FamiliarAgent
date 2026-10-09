@@ -699,7 +699,13 @@ export function useHubController(props: HubProps) {
     const destination = hosts.find((item) => item.serverId === endpoint.serverId);
     if (destination?.status === "online")
       await connectContextSources(host.id, logical, destination, hosts);
-    if (endpoint.kind === "agent")
+    if (endpoint.kind === "tool") {
+      setSession(logical);
+      setTarget(endpoint.serverId);
+      setCwd(endpoint.cwd);
+      setToolId(endpoint.provider);
+      setTab("Tools");
+    } else if (endpoint.kind === "agent")
       navigation?.openAgent({
         serverId: endpoint.serverId,
         agentId: endpoint.agentId,

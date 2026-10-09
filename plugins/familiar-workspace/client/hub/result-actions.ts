@@ -18,8 +18,9 @@ import { findNativeSession } from "./entry.js";
 
 export interface ResultDraft {
   sourceServerId: string;
-  source: PaseoAgent;
-  selection: SelectedResult;
+  source: { id: string; provider: string; cwd: string; title: string | null; model: string | null };
+  selection?: SelectedResult;
+  toolRunId?: string;
   capture: output<typeof captureCompositionResult.output>;
   session: CompositionSession | null;
   project: CompositionProject | null;
@@ -61,7 +62,11 @@ export async function loadResultDraft(
     project: linked?.project ?? null,
   };
 }
-function sourceEndpoint(serverId: string, agent: PaseoAgent, hosts: readonly PluginHostSummary[]) {
+function sourceEndpoint(
+  serverId: string,
+  agent: ResultDraft["source"],
+  hosts: readonly PluginHostSummary[],
+) {
   return {
     kind: "agent" as const,
     serverId,
@@ -78,6 +83,12 @@ export async function ensureResultSession(
   draft: ResultDraft,
   hosts: readonly PluginHostSummary[],
 ) {
+  if (draft.toolRunId) {
+    if (!draft.session || !draft.project)
+      throw new Error("Native tool result has no shared session");
+    const session = await hostRpc(catalog, readComposition, { id: draft.session.id });
+    return { session, project: draft.project };
+  }
   const linked = await findResultSession(catalog, draft.sourceServerId, draft.source.id);
   if (linked) {
     if (draft.session && linked.session.id !== draft.session.id)

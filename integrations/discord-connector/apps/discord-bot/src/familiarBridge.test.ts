@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { createFamiliarMessageHandler, familiarConfigSchema, type FamiliarConfig } from "./familiarBridge.js";
+import { createFamiliarMessageHandler, createFamiliarCommandRunner, familiarConfigSchema, type FamiliarConfig } from "./familiarBridge.js";
 import type { DiscordMessageLike } from "./messageHandler.js";
 let directory: string;
 let config: FamiliarConfig;
@@ -73,4 +73,62 @@ it("reads logical context and does not send native commands to terminal endpoint
   const terminal = message(); await handler(terminal);
   expect(terminal.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("aider (terminal)") }));
   expect(run.mock.calls.some(([args]) => args[3] === "agent.send")).toBe(false);
+});
+it("executes an original tool in the logical session using saved settings and deduplicates Discord retries", async () => {
+  config = familiarConfigSchema.parse({ ...config, servers: { linux: "ssh://linux?daemonPort=6787" }, channels: { "100": { host: "localhost:6786", sessionId: "logical-a", allowedUserIds: ["200"] } } });
+  const requests: unknown[] = [];
+  const run = vi.fn(async (args: string[]) => {
+    if (args[3] === "composition.read") return { result: { title: "A", activeEndpointId: "tool", endpoints: [{ id: "tool", kind: "tool", agentId: "tool-endpoint", serverId: "linux", provider: "goose", cwd: "/project" }] } };
+    if (args[3] === "tools.action-settings.read") return { result: { parameters: { provider: "claude-code" } } };
+    if (args[3] === "tools.run.start") { requests.push(JSON.parse(await readFile(args[5], "utf8"))); return { result: { state: "running" } }; }
+    throw new Error("Unexpected command");
+  });
+  const handler = createFamiliarMessageHandler(config, run);
+  const item = message({ content: "!fa run goose resume @native-session Continue the previous task" });
+  await handler(item); await handler(item);
+  expect(requests).toEqual([{ operationId: "discord-300", sessionId: "logical-a", toolId: "goose", action: "resume", cwd: "/project", nativeId: "native-session", input: "Continue the previous task", parameters: { provider: "claude-code" } }]);
+  expect(item.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("will not be sent again") }));
+});
+it("finds native results on their original server after a session switches servers", async () => {
+  config = familiarConfigSchema.parse({ ...config, servers: { mac: "localhost:6786", linux: "ssh://linux?daemonPort=6787" }, channels: { "100": { host: "localhost:6786", sessionId: "logical-a", allowedUserIds: ["200"] } } });
+  const run = vi.fn(async (args: string[]) => {
+    if (args[3] === "composition.read") return { result: { title: "A", activeEndpointId: "tool", endpoints: [{ id: "tool", kind: "tool", agentId: "tool-endpoint", serverId: "mac", provider: "aider", cwd: "/project" }] } };
+    if (args[3] === "tools.run.read" && args.includes("ssh://linux?daemonPort=6787")) return { result: { id: "old-run", state: "completed", request: { sessionId: "logical-a", toolId: "goose", action: "run" }, result: { text: "original remote result" }, error: null } };
+    throw new Error("not found");
+  });
+  const item = message({ content: "!fa action old-run" });
+  await createFamiliarMessageHandler(config, run)(item);
+  expect(item.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining("original remote result") }));
+});
+
+async function readOwnedPid(file: string): Promise<number> {
+  for(let attempt=0;attempt<100;attempt++) {
+    try {return Number(await readFile(file,"utf8"));} catch {await new Promise(resolve=>setTimeout(resolve,10));}
+  }
+  throw new Error("Owned CLI fixture did not start");
+}
+function killOwnedPid(pid: number | undefined) { if(pid) try {process.kill(pid,"SIGKILL");} catch { /* Already reaped. */ } }
+it("bounds CLI timeout and escalates when the native transport ignores termination", async () => {
+  const runner=createFamiliarCommandRunner(process.execPath),file=path.join(directory,"timeout.pid");
+  let pid: number | undefined;
+  const result=runner(["-e",`require('node:fs').writeFileSync(${JSON.stringify(file)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`],1000).catch(error=>error as Error);
+  try {pid=await readOwnedPid(file);expect(String(await result)).toContain("timed out");expect(()=>process.kill(pid!,0)).toThrow();}
+  finally {await runner.close();killOwnedPid(pid);}
+});
+it.skipIf(process.platform === "win32")("closes owned CLI process groups when the Discord connector stops", async () => {
+  const runner=createFamiliarCommandRunner(process.execPath),file=path.join(directory,"close.pid");
+  let pid: number | undefined;
+  const result=runner(["-e",`const c=require('node:child_process').spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});require('node:fs').writeFileSync(${JSON.stringify(file)},String(c.pid));setInterval(()=>{},1000);`],10000).catch(error=>error as Error);
+  try {
+    pid=await readOwnedPid(file);await new Promise(resolve=>setTimeout(resolve,100));await runner.close();expect(String(await result)).toContain("connector stopped");
+    for(let attempt=0;attempt<50;attempt++){try{process.kill(pid,0);}catch{return;}await new Promise(resolve=>setTimeout(resolve,10));}
+    throw new Error("Owned Discord CLI grandchild survived shutdown");
+  } finally {await runner.close();killOwnedPid(pid);}
+});
+it("rejects oversized CLI output without keeping its producer alive", async () => {
+  const runner=createFamiliarCommandRunner(process.execPath),file=path.join(directory,"output.pid");
+  let pid: number | undefined;
+  const result=runner(["-e",`require('node:fs').writeFileSync(${JSON.stringify(file)},String(process.pid));process.on('SIGTERM',()=>{});process.stdout.write(Buffer.alloc(9*1024*1024));setInterval(()=>{},1000);`],5000).catch(error=>error as Error);
+  try {pid=await readOwnedPid(file);expect(String(await result)).toContain("exceeds 8 MiB");expect(()=>process.kill(pid!,0)).toThrow();}
+  finally {await runner.close();killOwnedPid(pid);}
 });

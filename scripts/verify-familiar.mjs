@@ -51,10 +51,16 @@ if (active.has("desktop"))
     "packages/desktop/src/daemon/desktop-packaging.test.ts",
     "packages/desktop/src/daemon/quit-lifecycle.test.ts",
   );
+// Directory discovery includes native/integrated/infrastructure adapters, tool-action
+// transport/store/service/result graphs and Hub UI regressions. Do not duplicate
+// individual suite paths here: new plugin tests must remain part of the fast run.
 if (active.has("workspace")) tests.push("plugins/familiar-workspace");
 if (active.has("server"))
   tests.push(
     "packages/server/src/server/file-download/token-store.test.ts",
+    "packages/server/src/server/project-root-watch-worker.test.ts",
+    "packages/server/src/server/workspace-reconciliation-service.test.ts",
+    "packages/server/src/server/workspace-reconciliation-observation.test.ts",
     "packages/server/src/server/agent/providers/claude/agent.initialization.test.ts",
     "packages/server/src/server/agent/providers/codex-executable.test.ts",
     "packages/server/src/server/agent/providers/codex-app-server-agent.test.ts",
@@ -127,6 +133,7 @@ if (options.has("--integration"))
     "packages/server/src/server/daemon-e2e/familiar-fork.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-composition.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-result-input.e2e.test.ts",
+    "packages/server/src/server/daemon-e2e/familiar-tool-result-bridge.e2e.test.ts",
     "--maxWorkers=1",
   ]);
 const running = new Set();

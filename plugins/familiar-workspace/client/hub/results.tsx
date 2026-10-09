@@ -1,3 +1,4 @@
+import { NativeToolActions } from "./tool-actions.js";
 import { Text, View } from "react-native";
 import type { CompositionInput, CompositionResult } from "../../shared/results.js";
 import type { HubController, HubProps } from "./controller.js";
@@ -60,13 +61,17 @@ function InputCard({
           void hub.run(() => flow.preview(record));
         })}
         {ui.button("Open original", () =>
-          hub.navigation?.openAgent({ serverId: source.serverId, agentId: source.locator }),
+          source.format === "tool-result"
+            ? hub.setTab("Tools")
+            : hub.navigation?.openAgent({ serverId: source.serverId, agentId: source.locator }),
         )}
         {ui.button("Open conversation", () =>
-          hub.navigation?.openAgent({
-            serverId: input.targetServerId,
-            agentId: input.targetAgentId,
-          }),
+          input.tool
+            ? hub.setTab("Tools")
+            : hub.navigation?.openAgent({
+                serverId: input.targetServerId,
+                agentId: input.targetAgentId,
+              }),
         )}
         {input.state === "unknown" || input.state === "prepared"
           ? ui.button("Check status", () => {
@@ -132,6 +137,12 @@ function ResultTargetPicker({
           Boolean(flow.submitted || flow.pendingTarget),
           flow.targetKey === "new",
         )}
+        {ui.button(
+          "Original tool",
+          () => flow.setTargetKey("tool"),
+          Boolean(flow.submitted || flow.pendingTarget),
+          flow.targetKey === "tool",
+        )}
         {choices.map((choice) => (
           <View key={choice.key}>
             {ui.button(
@@ -151,9 +162,8 @@ function ManualInput({ hub, ui, flow }: { hub: HubController; ui: HubUi; flow: R
     <View style={ui.card}>
       <Text style={ui.sectionHeading}>Use with another app</Text>
       <Text style={ui.muted}>
-        Terminal, web and desktop tools keep their own input controls. Copy the input and paste it
-        into the original tool. Familiar does not record this as delivered or capture its results
-        automatically.
+        For supported native actions, choose Original tool above. Other apps keep their own input
+        controls; copying and pasting manually does not create a delivery receipt.
       </Text>
       <View style={ROW}>
         {ui.button("Copy input", () => {
@@ -258,10 +268,12 @@ export function HubResults({
               {flow.draft.capture.text}
             </Text>
             {ui.button("Open original", () =>
-              hub.navigation?.openAgent({
-                serverId: flow.draft!.sourceServerId,
-                agentId: flow.draft!.source.id,
-              }),
+              flow.draft!.toolRunId
+                ? hub.setTab("Tools")
+                : hub.navigation?.openAgent({
+                    serverId: flow.draft!.sourceServerId,
+                    agentId: flow.draft!.source.id,
+                  }),
             )}
             {ui.field("Instruction for the target", flow.instruction, flow.setInstruction, true)}
             <ResultTargetPicker hub={hub} ui={ui} flow={flow} />
@@ -277,14 +289,19 @@ export function HubResults({
           {flow.targetKey === "new" && !flow.submitted && !flow.pendingTarget ? (
             <HubWorkspace hub={hub} ui={ui} props={props} forResult />
           ) : null}
+          {flow.targetKey === "tool" ? (
+            <NativeToolActions hub={hub} ui={ui} flow={flow} asInput />
+          ) : null}
           <View style={ROW}>
-            {ui.button(
-              "Send input",
-              () => {
-                void hub.run(flow.send);
-              },
-              Boolean(flow.submitted),
-            )}
+            {flow.targetKey !== "tool"
+              ? ui.button(
+                  "Send input",
+                  () => {
+                    void hub.run(flow.send);
+                  },
+                  Boolean(flow.submitted),
+                )
+              : null}
             {ui.button(flow.submitted ? "Close preview" : "Cancel", flow.cancel)}
           </View>
           {flow.deliveryError ? (
@@ -307,35 +324,39 @@ export function HubResults({
       <Text style={ui.sectionHeading}>
         Inputs / Results{hub.session ? ` · ${hub.session.title}` : ""}
       </Text>
-      {hub.session ? (
-        <>
-          <View style={ROW}>
-            {ui.button("Refresh inputs", flow.refresh)}
-            {ui.button(
-              "Previous inputs",
-              () => flow.setOffset(Math.max(0, flow.offset - INPUT_PAGE_SIZE)),
-              flow.offset === 0,
-            )}
-            <Text style={ui.muted}>
-              {flow.records.total
-                ? `${flow.offset + 1}–${Math.min(flow.offset + flow.records.records.length, flow.records.total)} of ${flow.records.total}`
-                : "No inputs in this session yet"}
-            </Text>
-            {ui.button(
-              "Next inputs",
-              () => flow.setOffset(flow.offset + INPUT_PAGE_SIZE),
-              flow.offset + INPUT_PAGE_SIZE >= flow.records.total,
-            )}
-          </View>
-          {flow.records.records
-            .filter((record) => record.input.id !== flow.submitted?.input.id)
-            .map((record) => (
-              <InputCard key={record.input.id} hub={hub} ui={ui} flow={flow} record={record} />
-            ))}
-        </>
-      ) : (
-        <Text style={ui.muted}>Select a shared session to view its result connections.</Text>
-      )}
+      <ResultHistory hub={hub} ui={ui} flow={flow} />
     </>
+  );
+}
+
+function ResultHistory({ hub, ui, flow }: { hub: HubController; ui: HubUi; flow: ResultFlow }) {
+  return hub.session ? (
+    <>
+      <View style={ROW}>
+        {ui.button("Refresh inputs", flow.refresh)}
+        {ui.button(
+          "Previous inputs",
+          () => flow.setOffset(Math.max(0, flow.offset - INPUT_PAGE_SIZE)),
+          flow.offset === 0,
+        )}
+        <Text style={ui.muted}>
+          {flow.records.total
+            ? `${flow.offset + 1}–${Math.min(flow.offset + flow.records.records.length, flow.records.total)} of ${flow.records.total}`
+            : "No inputs in this session yet"}
+        </Text>
+        {ui.button(
+          "Next inputs",
+          () => flow.setOffset(flow.offset + INPUT_PAGE_SIZE),
+          flow.offset + INPUT_PAGE_SIZE >= flow.records.total,
+        )}
+      </View>
+      {flow.records.records
+        .filter((record) => record.input.id !== flow.submitted?.input.id)
+        .map((record) => (
+          <InputCard key={record.input.id} hub={hub} ui={ui} flow={flow} record={record} />
+        ))}
+    </>
+  ) : (
+    <Text style={ui.muted}>Select a shared session to view its result connections.</Text>
   );
 }

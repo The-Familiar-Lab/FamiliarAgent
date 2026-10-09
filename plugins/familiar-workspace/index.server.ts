@@ -1,3 +1,10 @@
+import { nativeActionContext } from "./server/tool-actions/context.js";
+import { ToolActions } from "./server/tool-actions/service.js";
+import { ToolRunStore } from "./server/tool-actions/store.js";
+import { NATIVE_TOOL_ADAPTERS } from "./server/native-tools/index.js";
+import { INTEGRATED_TOOL_ADAPTERS } from "./server/integrated-tools/index.js";
+import { INFRASTRUCTURE_ADAPTERS } from "./server/infrastructure/index.js";
+import { ToolCatalog } from "./server/tool-catalog/service.js";
 import { HistoryStore } from "./server/history/store.js";
 import { registerComposition } from "./server/composition/register.js";
 import { registerToolCatalog } from "./server/tool-catalog/index.js";
@@ -53,11 +60,21 @@ export default function contribute(server: PluginServerContext) {
     if (settings.status !== "ready") throw new Error(settings.error);
     return settings.values.authority;
   };
+  const serverId =
+    process.env.PASEO_SERVER_ID || readFileSync(path.join(home, "server-id"), "utf8").trim();
+  const toolCatalog = new ToolCatalog(home);
+  const actions = new ToolActions(
+    new ToolRunStore(path.join(home, "familiar", "tool-actions"), serverId),
+    [...NATIVE_TOOL_ADAPTERS, ...INTEGRATED_TOOL_ADAPTERS, ...INFRASTRUCTURE_ADAPTERS],
+    (command) => toolCatalog.resolveCommand(command),
+    Number(process.env.FAMILIAR_TOOL_CONCURRENCY ?? 4),
+    nativeActionContext(home, toolCatalog),
+  );
   const stopComposition = registerComposition(server, {
+    actions,
     directory: path.join(home, "familiar", "composition"),
     home,
-    serverId:
-      process.env.PASEO_SERVER_ID || readFileSync(path.join(home, "server-id"), "utf8").trim(),
+    serverId,
     history,
     authority,
     cliPath: process.env.PASEO_CLI,
@@ -120,5 +137,6 @@ export default function contribute(server: PluginServerContext) {
   });
   return () => {
     stopComposition();
+    void actions.close();
   };
 }

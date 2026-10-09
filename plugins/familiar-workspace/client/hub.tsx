@@ -99,7 +99,7 @@ export function FamiliarHub(props: HubProps) {
       <HubSessions hub={hub} ui={ui} props={props} />
       <HubResults hub={hub} ui={ui} props={props} flow={results} />
       <HubFiles hub={hub} ui={ui} props={props} />
-      <HubTools hub={hub} ui={ui} props={props} />
+      <HubTools hub={hub} ui={ui} props={props} flow={results} />
       <HubMemory hub={hub} ui={ui} props={props} />
       <HubServers hub={hub} ui={ui} props={props} />
     </ScrollView>

@@ -27,6 +27,7 @@ export function localResourceReader(options: {
   serverId: string;
   history: Pick<HistoryStore, "readPage">;
   paseo: PaseoApi;
+  toolReader?: ResourceReader;
 }): ResourceReader {
   return async (resource, input) => {
     if (resource.serverId !== options.serverId)
@@ -37,6 +38,10 @@ export function localResourceReader(options: {
       throw new Error(
         "This reference is opened with its native file, skill, MCP or tool surface; it is not a conversation history",
       );
+    if (resource.format === "tool-result") {
+      if (!options.toolReader) throw new Error("Native tool result storage is unavailable");
+      return options.toolReader(resource, input);
+    }
     if (input.selection && resource.format !== "native-timeline")
       throw new Error("Selected results require a native conversation source");
     if (resource.format === "imported-history")
@@ -267,7 +272,16 @@ export async function boundedSourceRead(
   input: Parameters<ResourceReader>[1],
   reader: ResourceReader,
 ) {
-  const result = await reader(resource, input);
+  // Catalog coordinates select the reference locally; only page fields belong
+  // on the owning server's strict source-read transport.
+  const { offset, limit, maxCharacters, captureBoundary, selection } = input;
+  const result = await reader(resource, {
+    offset,
+    limit,
+    maxCharacters,
+    ...(captureBoundary === undefined ? {} : { captureBoundary }),
+    ...(selection === undefined ? {} : { selection }),
+  });
   let remaining = input.maxCharacters;
   let truncated = result.truncated ?? false;
   const messages = result.messages.slice(0, input.limit).flatMap((message) => {

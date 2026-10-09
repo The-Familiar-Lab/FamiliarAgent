@@ -20,6 +20,7 @@ import { RESULT_TEXT_BYTE_LIMIT } from "../../shared/result-selection.js";
 import { captureResult, previewResult } from "./result-source.js";
 import { joinSelectedText, renderResultInput, textDigest } from "./result-text.js";
 import type { ResourceReader } from "./store.js";
+import type { ToolActions } from "../tool-actions/service.js";
 import type { ResultStore } from "./result-store.js";
 
 export const resultCatalogContracts = [
@@ -103,6 +104,7 @@ export function registerResultHandlers(
   server: PluginServerContext,
   options: {
     serverId: string;
+    actions?: ToolActions;
     invoke: (method: string, input: Record<string, unknown>, paseo?: PaseoApi) => Promise<unknown>;
     reader: (paseo: PaseoApi) => ResourceReader;
   },
@@ -133,12 +135,7 @@ export function registerResultHandlers(
     );
     if (record.input.targetServerId !== options.serverId)
       throw new Error("Open the selected target server before sending this input");
-    if (
-      record.input.state === "accepted" ||
-      record.input.state === "failed" ||
-      (reconcile && record.input.state === "prepared")
-    )
-      return record;
+    if (deliveryIsSettled(record.input, reconcile)) return record;
     if (!reconcile && record.input.state !== "prepared") return record;
     const claim = claimCompositionInput.output.parse(
       await options.invoke(
@@ -157,19 +154,28 @@ export function registerResultHandlers(
       const prompt = renderResultInput(record.result.anchor, selected, record.input.instruction);
       if (textDigest(prompt).sha256 !== record.input.inputSha256)
         throw new Error("Prepared result input no longer matches its recorded digest");
-      const agent = paseo.agents.ref(record.input.targetAgentId);
-      if (reconcile) {
-        const receipt = await agent.messageReceipt(inputId, {
-          text: prompt,
-          activeTurnBehavior: "reject",
-        });
-        if (receipt.state === "completed") state = "accepted";
-        else if (receipt.state === "rejected") state = "failed";
-        error = receipt.error;
-      } else {
+      if (record.input.tool) {
+        if (!options.actions)
+          throw new Error("Native tool execution is unavailable on this server");
         nativeInvoked = true;
-        await agent.send(prompt, { messageId: inputId, activeTurnBehavior: "reject" });
-        state = "accepted";
+        const delivered = await deliverToolInput(options.actions, record.input, prompt, reconcile);
+        state = delivered.state;
+        error = delivered.error;
+      } else {
+        const agent = paseo.agents.ref(record.input.targetAgentId);
+        if (reconcile) {
+          const receipt = await agent.messageReceipt(inputId, {
+            text: prompt,
+            activeTurnBehavior: "reject",
+          });
+          if (receipt.state === "completed") state = "accepted";
+          else if (receipt.state === "rejected") state = "failed";
+          error = receipt.error;
+        } else {
+          nativeInvoked = true;
+          await agent.send(prompt, { messageId: inputId, activeTurnBehavior: "reject" });
+          state = "accepted";
+        }
       }
     } catch (failure) {
       state = !reconcile && (!nativeInvoked || wasRejected(failure)) ? "failed" : "unknown";
@@ -208,5 +214,39 @@ export function registerResultHandlers(
   );
   server.handle(reconcileCompositionInput, (input, { paseo }) =>
     deliver(input.id, input.inputId, paseo, true),
+  );
+}
+
+async function deliverToolInput(
+  actions: ToolActions,
+  input: CompositionInput,
+  prompt: string,
+  reconcile: boolean,
+): Promise<{ state: CompositionInput["state"]; error: string | null }> {
+  if (!input.tool) throw new Error("Missing native action descriptor");
+  const request = { ...input.tool, sessionId: input.sessionId, input: prompt };
+  const run = reconcile
+    ? actions.store.replay(input.id, request)
+    : await actions.start({ ...request, operationId: input.id });
+  if (!run)
+    throw new Error(
+      "No native action receipt is available for this input. Inspect the original target; it was not resent.",
+    );
+  let state: CompositionInput["state"] = "unknown";
+  if (run.state === "completed" || run.state === "submitted") state = "accepted";
+  else if (run.state === "failed") state = "failed";
+  const error =
+    run.error ??
+    (run.state === "running"
+      ? "Native action is running. Check status to read its receipt."
+      : null);
+  return { state, error };
+}
+
+function deliveryIsSettled(input: CompositionInput, reconcile: boolean) {
+  return (
+    input.state === "accepted" ||
+    input.state === "failed" ||
+    (reconcile && input.state === "prepared")
   );
 }

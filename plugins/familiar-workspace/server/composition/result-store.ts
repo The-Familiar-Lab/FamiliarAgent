@@ -11,7 +11,7 @@ import {
   type CompositionResult,
   type ResultAnchor,
 } from "../../shared/results.js";
-import type { CompositionSession } from "../../shared/composition.js";
+import type { CompositionSession, CompositionEndpoint } from "../../shared/composition.js";
 import { renderResultInput, textDigest } from "./result-text.js";
 
 type Prepare = z.infer<typeof prepareCompositionInput.input>;
@@ -31,6 +31,7 @@ export class ResultStore {
   constructor(
     directory: string,
     private readonly session: (id: string) => CompositionSession,
+    private readonly acceptsResult: (toolId: string, action: string) => boolean = () => false,
   ) {
     this.db = new DatabaseSync(path.join(directory, "composition.sqlite"));
     this.db.exec(`PRAGMA busy_timeout=3000;
@@ -99,25 +100,25 @@ export class ResultStore {
       throw new Error("Logical session changed; reload before preparing this input");
     const source = session.endpoints.find((endpoint) => endpoint.id === raw.sourceEndpointId);
     const target = session.endpoints.find((endpoint) => endpoint.id === raw.targetEndpointId);
-    if (!source || !target || source.kind !== "agent" || target.kind !== "agent")
+    if (
+      !source ||
+      !target ||
+      !["agent", "tool"].includes(source.kind) ||
+      !["agent", "tool"].includes(target.kind)
+    )
       throw new Error(
-        "Source and target must be native agents linked to this same logical session",
+        "Source and target must be native agents or tools linked to this same logical session",
+      );
+    if ((target.kind === "tool") !== !!raw.tool)
+      throw new Error("Tool destinations require an explicit native action");
+    if (raw.tool && !this.acceptsResult(target.provider, raw.tool.action))
+      throw new Error(
+        "This native action does not accept composed prompts. Use its original action form for exact commands or file data.",
       );
     const resource = raw.anchor.resource;
-    if (
-      resource.kind !== "history" ||
-      resource.format !== "native-timeline" ||
-      resource.serverId !== source.serverId ||
-      resource.locator !== source.agentId ||
-      !resource.readOnly
-    )
+    if (resource.kind !== "history" || resource.serverId !== source.serverId || !resource.readOnly)
       throw new Error("Result source does not match the linked source endpoint");
-    if (
-      resource.boundary?.kind !== "native" ||
-      !resource.boundary.transcript ||
-      resource.boundary.transcript.source.toLowerCase() !== source.provider
-    )
-      throw new Error("Result source provider or persistent boundary does not match its endpoint");
+    validateResultSource(source, resource, raw.id);
     // Connection addresses come from the linked endpoint, never an untrusted captured descriptor.
     return { ...raw.anchor, resource: { ...resource, connection: source.connection } };
   }
@@ -145,6 +146,7 @@ export class ResultStore {
         targetEndpointId: target.id,
         targetServerId: target.serverId,
         targetAgentId: target.agentId,
+        ...(raw.tool ? { tool: { ...raw.tool, toolId: target.provider, cwd: target.cwd } } : {}),
         instruction: raw.instruction,
         inputSha256: textDigest(prompt).sha256,
         state: "prepared",
@@ -170,7 +172,9 @@ export class ResultStore {
     );
     if (
       !endpoint ||
-      endpoint.kind !== "agent" ||
+      endpoint.kind !== (input.tool ? "tool" : "agent") ||
+      (input.tool &&
+        (endpoint.provider !== input.tool.toolId || endpoint.cwd !== input.tool.cwd)) ||
       endpoint.serverId !== serverId ||
       endpoint.agentId !== agentId ||
       input.targetServerId !== serverId ||
@@ -217,5 +221,31 @@ export class ResultStore {
         .run(JSON.stringify(input), input.id);
       return { result: record.result, input };
     });
+  }
+}
+
+function validateResultSource(
+  source: CompositionEndpoint,
+  resource: ResultAnchor["resource"],
+  sessionId: string,
+) {
+  if (source.kind === "tool") {
+    if (
+      resource.format !== "tool-result" ||
+      resource.boundary?.kind !== "tool" ||
+      resource.boundary.toolId !== source.provider ||
+      resource.boundary.cwd !== source.cwd ||
+      resource.boundary.sessionId !== sessionId
+    )
+      throw new Error("Native tool result does not match this source endpoint and logical session");
+  } else {
+    if (resource.format !== "native-timeline" || resource.locator !== source.agentId)
+      throw new Error("Result source does not match the linked source endpoint");
+    if (
+      resource.boundary?.kind !== "native" ||
+      !resource.boundary.transcript ||
+      resource.boundary.transcript.source.toLowerCase() !== source.provider
+    )
+      throw new Error("Result source provider or persistent boundary does not match its endpoint");
   }
 }

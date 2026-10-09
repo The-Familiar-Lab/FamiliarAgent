@@ -25,6 +25,15 @@ const transcriptFileBoundary = z
 export const historyBoundary = z.discriminatedUnion("kind", [
   z
     .object({
+      kind: z.literal("tool"),
+      toolId: id,
+      sessionId: id,
+      cwd: z.string(),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("native"),
       epoch: z.string(),
       seq: z.number().int().nonnegative(),
@@ -63,7 +72,9 @@ export const compositionResource = z
     label: z.string().trim().min(1).max(200),
     serverId: id,
     connection,
-    format: z.enum(["native-timeline", "imported-history", "path", "url"]).optional(),
+    format: z
+      .enum(["native-timeline", "imported-history", "tool-result", "path", "url"])
+      .optional(),
     boundary: historyBoundary.optional(),
     // A native path, URL or native object ID; this is a reference, never executable code.
     locator: z.string().min(1).max(4096),
@@ -76,7 +87,7 @@ export const compositionEndpoint = z
     serverId: id,
     connection,
     agentId: id,
-    kind: z.enum(["agent", "terminal", "web", "desktop"]).default("agent"),
+    kind: z.enum(["agent", "terminal", "web", "desktop", "tool"]).default("agent"),
     workspaceId: id.optional(),
     url: z.string().max(4096).optional(),
     provider: z.string().min(1).max(100),

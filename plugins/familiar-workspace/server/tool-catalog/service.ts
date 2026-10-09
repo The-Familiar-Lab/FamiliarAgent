@@ -26,6 +26,14 @@ const registrations = z.array(toolRegistration).max(128);
 type RegisteredTool = BuiltinTool & { registration?: ToolRegistration };
 
 export class ToolCatalog {
+  async resolveCommand(command: string): Promise<string> {
+    const executable = await this.findExecutable(command);
+    if (!executable)
+      throw new Error(
+        `Native command '${command}' is unavailable on this server. Install it or select its executable in Advanced.`,
+      );
+    return executable;
+  }
   private readonly home: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
@@ -37,6 +45,9 @@ export class ToolCatalog {
     this.home = options.home ?? os.homedir();
     this.env = options.env ?? process.env;
     this.platform = options.platform ?? process.platform;
+  }
+  searchPath(): string {
+    return this.binDirectories().join(path.delimiter);
   }
   private binDirectories(): string[] {
     return [
@@ -399,7 +410,7 @@ function entryNotes(tool: RegisteredTool, modes: ToolEntry["modes"]): string[] {
   const notes = [...(tool.notes ?? [])];
   if (modes.includes("reference"))
     notes.push(
-      "Connect a deployed web URL or register a verified native command. This reference is not an active adapter.",
+      "Connect a deployed web URL or register its native command to open the original interface. Supported native actions are available in Run an original tool.",
     );
   if (tool.registration?.url)
     notes.push(

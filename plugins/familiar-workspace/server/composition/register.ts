@@ -39,6 +39,11 @@ import {
   resultCatalogContracts,
 } from "./result-handlers.js";
 
+import { ToolActionSettings } from "../tool-actions/settings.js";
+import type { ToolActions } from "../tool-actions/service.js";
+import { registerToolActions } from "../tool-actions/register.js";
+import { toolResultReader } from "../tool-actions/results.js";
+
 export function registerComposition(
   server: PluginServerContext,
   options: {
@@ -46,12 +51,29 @@ export function registerComposition(
     home: string;
     serverId: string;
     history: HistoryStore;
+    actions?: ToolActions;
+    toolReader?: ResourceReader;
     authority: () => Promise<string>;
     cliPath?: string;
   },
 ) {
+  options = {
+    ...options,
+    toolReader: options.actions ? toolResultReader(options.actions.store) : options.toolReader,
+  };
   const store = new CompositionStore(options.directory);
-  const results = new ResultStore(options.directory, (id) => store.read(id));
+  const results = new ResultStore(
+    options.directory,
+    (id) => store.read(id),
+    (toolId, actionId) =>
+      options.actions
+        ?.definitions()
+        .find((tool) => tool.toolId === toolId)
+        ?.actions.some(
+          (action) =>
+            action.id === actionId && action.input === true && action.inputMode === "prompt",
+        ) ?? false,
+  );
   const bridgeRegistry = new BridgeRegistry(
     path.join(options.directory, "bridges"),
     options.serverId,
@@ -130,7 +152,19 @@ export function registerComposition(
     }
     return catalogInvoke(method, input, undefined, reader);
   };
+  if (options.actions)
+    registerToolActions(
+      server,
+      options.actions,
+      (id) => sessionInvoke(readComposition.name, { id }),
+      new ToolActionSettings(path.join(options.directory, "action-settings"), () =>
+        options
+          .actions!.definitions()
+          .map((entry) => ({ id: entry.toolId, actions: entry.actions })),
+      ),
+    );
   registerResultHandlers(server, {
+    actions: options.actions,
     serverId: options.serverId,
     invoke: (method, input, paseo) =>
       sessionInvoke(

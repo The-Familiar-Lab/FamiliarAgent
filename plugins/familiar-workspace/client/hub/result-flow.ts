@@ -4,6 +4,7 @@ import { copyText } from "@getpaseo/plugin/client/react-native";
 import type { output } from "zod";
 import {
   captureCompositionResult,
+  captureToolRunResult,
   listCompositionInputs,
   prepareCompositionInput,
   previewCompositionResult,
@@ -24,6 +25,12 @@ import {
   parseResultRoute,
   type ResultDraft,
 } from "./result-actions.js";
+import type { ToolRun } from "../../shared/tool-actions.js";
+import {
+  bindToolEndpoint,
+  loadToolResultDraft,
+  type NativeToolTarget,
+} from "./tool-action-links.js";
 import type { HubController, NativeTargetSelection } from "./controller.js";
 
 interface InputRecord {
@@ -218,22 +225,29 @@ export function useResultFlow(
         throw new Error("This target belongs to another shared session. Choose New agent instead.");
     }
   };
-  const send = async () => {
+  const send = async (tool?: NativeToolTarget) => {
     if (!draft || submittedId.current || sending.current) return;
     sending.current = true;
     try {
       if (new TextEncoder().encode(instruction).length > RESULT_INSTRUCTION_BYTE_LIMIT)
         throw new Error("The instruction is too long. Shorten it before sending.");
-      await validateDestination(draft);
+      if (!tool) await validateDestination(draft);
       // Validate the selection before the explicit send creates any session or target.
-      await hostRpc(draft.sourceServerId, captureCompositionResult, {
-        agentId: draft.source.id,
-        selection: draft.selection,
-      });
+      if (draft.toolRunId)
+        await hostRpc(draft.sourceServerId, captureToolRunResult, { id: draft.toolRunId });
+      else {
+        if (!draft.selection) throw new Error("Choose a native source response");
+        await hostRpc(draft.sourceServerId, captureCompositionResult, {
+          agentId: draft.source.id,
+          selection: draft.selection,
+        });
+      }
       const linked = await ensureResultSession(catalog, draft, hub.hosts);
       hub.setProject(linked.project);
       updateSession(linked.session);
-      const target = await resolveTarget(linked.session, linked.project);
+      const target = tool
+        ? await bindToolEndpoint(catalog, linked.session, tool, hub.hosts)
+        : await resolveTarget(linked.session, linked.project);
       updateSession(target.session);
       const destination = hub.hosts.find((item) => item.serverId === target.endpoint.serverId);
       await connectContextSources(catalog, target.session, destination, hub.hosts);
@@ -241,7 +255,7 @@ export function useResultFlow(
         (item) =>
           item.serverId === draft.sourceServerId &&
           item.agentId === draft.source.id &&
-          item.kind === "agent",
+          item.kind === (draft.toolRunId ? "tool" : "agent"),
       );
       if (!source) throw new Error("The source endpoint is no longer linked to this session.");
       const key = JSON.stringify([
@@ -249,6 +263,7 @@ export function useResultFlow(
         source.id,
         target.endpoint.id,
         draft.capture.anchor,
+        tool,
         instruction,
       ]);
       if (preparation.current?.key !== key) preparation.current = { key, id: operationId() };
@@ -259,6 +274,9 @@ export function useResultFlow(
         sourceEndpointId: source.id,
         anchor: draft.capture.anchor,
         targetEndpointId: target.endpoint.id,
+        ...(tool
+          ? { tool: { action: tool.action, nativeId: tool.nativeId, parameters: tool.parameters } }
+          : {}),
         instruction,
       });
       setSubmitted(prepared);
@@ -341,7 +359,17 @@ export function useResultFlow(
     setPendingTarget(null);
     setDeliveryError("");
   };
+  const useToolResult = async (run: ToolRun) => {
+    cancel();
+    const next = await loadToolResultDraft(catalog, run, hub.hosts);
+    setDraft(next);
+    hub.setProject(next.project);
+    if (next.session) updateSession(next.session);
+    setTargetKey("new");
+    hub.setTab("Inputs / Results");
+  };
   return {
+    useToolResult,
     draft,
     manual,
     instruction,

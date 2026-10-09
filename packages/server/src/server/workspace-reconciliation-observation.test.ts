@@ -175,6 +175,7 @@ class ObservedPlacements {
   private readonly service: WorkspaceReconciliationService;
   private started = false;
   private checkoutReadCount = 0;
+  private nextWatch: ReturnType<typeof createGate> | null = null;
 
   constructor(private readonly specs: ProjectSpec[]) {
     cleanupPaths.push(this.home);
@@ -184,7 +185,12 @@ class ObservedPlacements {
       path.join(this.home, "workspaces.json"),
       logger,
     );
-    const watchProjectRoot: ProjectRootWatch = (rootPath, _options, onChange, onError) => {
+    const watchProjectRoot: ProjectRootWatch = async (rootPath, _options, onChange, onError) => {
+      if (this.nextWatch) {
+        const gate = this.nextWatch;
+        this.nextWatch = null;
+        await gate.arrive();
+      }
       if (this.failedWatchRoots.delete(rootPath)) throw new Error("root unavailable");
       const watch = { rootPath, onChange, onError, closed: false };
       this.watches.push(watch);
@@ -268,6 +274,10 @@ class ObservedPlacements {
 
   holdNextRegistryRead(): Gate {
     return this.projects.holdNextRead();
+  }
+
+  holdNextWatch(): Gate {
+    return (this.nextWatch = createGate());
   }
 
   holdNextReconciliation(): Gate {
@@ -597,5 +607,39 @@ describe("observed workspace placement", () => {
     expect(reconciliation.workspaceBatches).toEqual([]);
     expect(reconciliation.watchedRoots()).toEqual([]);
     expect(reconciliation.pendingTimers).toBe(0);
+  });
+
+  test("serializes async watch setup with concurrent additions and archive", async () => {
+    const observed = new ObservedPlacements([{ id: "first", root: "repo" }]);
+    const gate = observed.holdNextWatch();
+    const starting = observed.start();
+    await gate.started;
+    const adding = observed.add({ id: "second", root: "repo" });
+    gate.release();
+    await Promise.all([starting, adding]);
+    expect(observed.watchedRoots()).toEqual(["repo"]);
+
+    const late = observed.holdNextWatch();
+    const addLate = observed.add({ id: "late", root: "late" });
+    await late.started;
+    const removing = observed.archive("late");
+    late.release();
+    await Promise.all([addLate, removing]);
+    expect(observed.watchedRoots()).toEqual(["repo"]);
+    expect(observed.closedRoots()).toContain("late");
+    observed.dispose();
+  });
+
+  test("disposal while native setup is pending closes the late handle and does not arm rescan", async () => {
+    const observed = new ObservedPlacements([{ id: "first", root: "repo" }]);
+    const gate = observed.holdNextWatch();
+    const starting = observed.start();
+    await gate.started;
+    observed.dispose();
+    gate.release();
+    await starting;
+    expect(observed.watchedRoots()).toEqual([]);
+    expect(observed.closedRoots()).toEqual(["repo"]);
+    expect(observed.pendingTimers).toBe(0);
   });
 });

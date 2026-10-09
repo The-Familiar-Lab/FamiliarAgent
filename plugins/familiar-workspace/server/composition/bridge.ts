@@ -34,6 +34,35 @@ interface RunningBridge {
 const resourceKey = (resource: CompositionResource) =>
   `${resource.serverId}\0${resource.format}\0${resource.locator}`;
 
+/** A tool result is shareable only while its owning store verifies the frozen record. */
+export async function validateBridgeResources(
+  resources: CompositionResource[],
+  reader: ResourceReader,
+) {
+  for (const resource of resources) {
+    if (
+      resource.kind !== "history" ||
+      !["native-timeline", "imported-history", "tool-result"].includes(resource.format ?? "")
+    )
+      throw new Error(
+        "Only native history, imported history or completed tool result references can be shared through a context connection",
+      );
+    if (resource.format !== "tool-result") continue;
+    const expected = resource.boundary;
+    if (!resource.readOnly || expected?.kind !== "tool")
+      throw new Error("Shared tool results require an immutable source boundary");
+    const { boundary } = await reader(resource, { offset: 0, limit: 1, maxCharacters: 256 });
+    if (
+      boundary?.kind !== "tool" ||
+      boundary.toolId !== expected.toolId ||
+      boundary.cwd !== expected.cwd ||
+      boundary.sessionId !== expected.sessionId ||
+      boundary.sha256 !== expected.sha256
+    )
+      throw new Error("Shared tool result no longer matches its owning source");
+  }
+}
+
 function sshArguments(target: string, localPort: number) {
   const address = new URL(target);
   if (
@@ -303,19 +332,12 @@ export class CompositionBridges {
     if (input.targetServerId === this.options.serverId)
       throw new Error("A return path is unnecessary on the same server");
     for (const resource of input.resources)
-      if (
-        resource.kind !== "history" ||
-        !["native-timeline", "imported-history"].includes(resource.format ?? "")
-      )
-        throw new Error(
-          "Only native or imported history references can be shared through a context connection",
-        );
-    for (const resource of input.resources)
       if (resource.serverId !== this.options.serverId) {
         if (!resource.connection)
           throw new Error("Remote history requires an explicit SSH source connection");
         sshArguments(resource.connection, 1);
       }
+    await validateBridgeResources(input.resources, reader);
     const previous = this.pending.get(input.targetServerId) ?? Promise.resolve();
     const task = previous.catch(() => {}).then(() => this.prepare(input, reader, catalog));
     this.pending.set(input.targetServerId, task);

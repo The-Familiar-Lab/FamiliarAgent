@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { toolActionRequest } from "./tool-actions.js";
 import { compositionResource } from "./composition.js";
 import {
   resultDigest,
@@ -9,6 +10,11 @@ import {
 } from "./result-selection.js";
 
 const id = z.string().min(1).max(160);
+export const toolInputTarget = toolActionRequest.pick({
+  action: true,
+  nativeId: true,
+  parameters: true,
+});
 const sessionInput = { id, forwarded: z.boolean().optional() };
 export const resultAnchor = z
   .object({
@@ -34,6 +40,7 @@ export const compositionInput = z
     targetEndpointId: id,
     targetServerId: id,
     targetAgentId: id,
+    tool: toolInputTarget.extend({ toolId: z.string(), cwd: z.string() }).optional(),
     instruction: z.string().max(RESULT_INSTRUCTION_BYTE_LIMIT),
     inputSha256: resultDigest,
     state: z.enum(["prepared", "accepted", "failed", "unknown"]),
@@ -70,6 +77,7 @@ export const prepareCompositionInput = defineRpc({
       sourceEndpointId: id,
       anchor: resultAnchor,
       targetEndpointId: id,
+      tool: toolInputTarget.optional(),
       instruction: z.string().max(RESULT_INSTRUCTION_BYTE_LIMIT),
     })
     .strict(),
@@ -129,4 +137,10 @@ export const finishCompositionInput = defineRpc({
     })
     .strict(),
   output: compositionInputRecord,
+});
+
+export const captureToolRunResult = defineRpc({
+  name: "tools.run.capture",
+  input: z.object({ id }).strict(),
+  output: z.object({ anchor: resultAnchor, text: z.string() }),
 });

@@ -1,4 +1,5 @@
-import { statSync, watch as watchPath } from "node:fs";
+import { watch as watchPath } from "node:fs";
+import { stat } from "node:fs/promises";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type pino from "pino";
 import type {
@@ -16,6 +17,7 @@ import {
 } from "./workspace-registry-model.js";
 import { workspaceIdsForProjects } from "./workspace-directory.js";
 import { deriveProjectKey } from "./project-key.js";
+import { ProjectRootWatchWorker } from "./project-root-watch-worker.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_DEBOUNCE_MS = 100;
@@ -24,7 +26,7 @@ export type ProjectUpdate =
   | { kind: "upsert"; project: PersistedProjectRecord }
   | { kind: "remove"; projectId: string };
 
-interface ProjectRootWatcher {
+export interface ProjectRootWatcher {
   close(): void;
 }
 
@@ -34,7 +36,7 @@ export interface ProjectRootWatch {
     options: { recursive: false },
     onChange: (event: string, filename: string | Buffer | null) => void,
     onError: (error: Error) => void,
-  ): ProjectRootWatcher;
+  ): ProjectRootWatcher | Promise<ProjectRootWatcher>;
 }
 
 export interface ReconciliationTimer {
@@ -123,10 +125,12 @@ export class WorkspaceReconciliationService {
   private readonly onWorkspaceArchived: ((workspaceId: string) => void | Promise<void>) | null;
   private readonly onWorkspacesChanged: ((workspaceIds: string[]) => Promise<void>) | null;
   private readonly watchProjectRoot: ProjectRootWatch;
+  private readonly watchWorker: ProjectRootWatchWorker | null;
   private readonly clock: ReconciliationClock;
   private readonly rescanIntervalMs: number;
   private readonly debounceMs: number;
   private readonly watchers: Array<{ rootPath: string; watcher: ProjectRootWatcher }> = [];
+  private watchSync: Promise<void> = Promise.resolve();
   private unsubscribeRegistry: (() => void) | null = null;
   private rescanTimer: ReconciliationTimer | null = null;
   private debounceTimer: ReconciliationTimer | null = null;
@@ -145,7 +149,11 @@ export class WorkspaceReconciliationService {
     this.onProjectUpdate = options.onProjectUpdate ?? null;
     this.onWorkspaceArchived = options.onWorkspaceArchived ?? null;
     this.onWorkspacesChanged = options.onWorkspacesChanged ?? null;
-    this.watchProjectRoot = options.watchProjectRoot ?? watchProjectRoot;
+    this.watchWorker =
+      !options.watchProjectRoot && process.platform === "darwin"
+        ? new ProjectRootWatchWorker()
+        : null;
+    this.watchProjectRoot = options.watchProjectRoot ?? this.watchWorker?.watch ?? watchProjectRoot;
     this.clock = options.clock ?? systemClock;
     this.rescanIntervalMs = options.rescanIntervalMs ?? DEFAULT_RESCAN_INTERVAL_MS;
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
@@ -171,6 +179,7 @@ export class WorkspaceReconciliationService {
         }
       }) ?? null;
     await this.syncProjectRootWatches();
+    if (this.disposed) return;
     this.rescanTimer = this.clock.setInterval(
       () => this.reconcileObservedGitMetadata("full"),
       this.rescanIntervalMs,
@@ -186,6 +195,7 @@ export class WorkspaceReconciliationService {
     if (this.debounceTimer) this.clock.clearTimeout(this.debounceTimer);
     for (const { watcher } of this.watchers) watcher.close();
     this.watchers.length = 0;
+    this.watchWorker?.dispose();
   }
 
   /** Reconciles mutable Git facts only; never archives missing records. */
@@ -198,18 +208,18 @@ export class WorkspaceReconciliationService {
     ]);
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     for (const workspace of workspaces) {
-      if (workspace.archivedAt || this.inspectDirectory(workspace.cwd) !== "directory") continue;
+      if (workspace.archivedAt || (await this.inspectDirectory(workspace.cwd)) !== "directory")
+        continue;
       const siblings = workspacesByProject.get(workspace.projectId) ?? [];
       siblings.push(workspace);
       workspacesByProject.set(workspace.projectId, siblings);
     }
-    await this.reconcileGitMetadataForProjects(
-      projects.filter(
-        (project) => !project.archivedAt && this.inspectDirectory(project.rootPath) === "directory",
-      ),
-      workspacesByProject,
-      changes,
-    );
+    const reachableProjects: PersistedProjectRecord[] = [];
+    for (const project of projects) {
+      if (!project.archivedAt && (await this.inspectDirectory(project.rootPath)) === "directory")
+        reachableProjects.push(project);
+    }
+    await this.reconcileGitMetadataForProjects(reachableProjects, workspacesByProject, changes);
     if (changes.length > 0) this.onChanges?.(changes);
     return { changesApplied: changes, durationMs: Date.now() - start };
   }
@@ -223,18 +233,26 @@ export class WorkspaceReconciliationService {
 
     const activeProjects = allProjects.filter((p) => !p.archivedAt);
     const activeWorkspaces = allWorkspaces.filter((w) => !w.archivedAt);
-    const workspaceDirectoryStates = activeWorkspaces.map((workspace) => ({
-      workspace,
-      state: this.inspectDirectory(workspace.cwd),
-    }));
+    // Serial async reads keep one gated filesystem call from blocking the daemon
+    // thread or filling its shared libuv threadpool with every project at once.
+    const workspaceDirectoryStates: Array<{
+      workspace: PersistedWorkspaceRecord;
+      state: DirectoryState;
+    }> = [];
+    for (const workspace of activeWorkspaces) {
+      workspaceDirectoryStates.push({
+        workspace,
+        state: await this.inspectDirectory(workspace.cwd),
+      });
+    }
     // Project roots are read after the workspace directories, so a volume that
     // goes away mid-pass leaves its project unreachable rather than its workspaces
     // alone. The skew can only withhold an archive, never produce one.
-    const reachableProjectIds = new Set(
-      activeProjects
-        .filter((project) => this.inspectDirectory(project.rootPath) === "directory")
-        .map((project) => project.projectId),
-    );
+    const reachableProjectIds = new Set<string>();
+    for (const project of activeProjects) {
+      if ((await this.inspectDirectory(project.rootPath)) === "directory")
+        reachableProjectIds.add(project.projectId);
+    }
 
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     for (const { workspace, state } of workspaceDirectoryStates) {
@@ -416,7 +434,13 @@ export class WorkspaceReconciliationService {
     );
   }
 
-  private async syncProjectRootWatches(): Promise<void> {
+  private syncProjectRootWatches(): Promise<void> {
+    const sync = this.watchSync.then(() => this.syncProjectRootWatchesNow());
+    this.watchSync = sync.catch(() => undefined);
+    return sync;
+  }
+
+  private async syncProjectRootWatchesNow(): Promise<void> {
     if (this.disposed) return;
     const projects = await this.projectRegistry.list();
     if (this.disposed) return;
@@ -439,7 +463,7 @@ export class WorkspaceReconciliationService {
       if (alreadyWatching) continue;
       try {
         let watcher: ProjectRootWatcher;
-        watcher = this.watchProjectRoot(
+        watcher = await this.watchProjectRoot(
           project.rootPath,
           { recursive: false },
           (_event, filename) => {
@@ -457,6 +481,10 @@ export class WorkspaceReconciliationService {
             );
           },
         );
+        if (this.disposed) {
+          watcher.close();
+          return;
+        }
         this.watchers.push({ rootPath: project.rootPath, watcher });
       } catch (error) {
         // The periodic reconciliation is the convergence path for roots that
@@ -537,9 +565,9 @@ export class WorkspaceReconciliationService {
     return this.workspaceGitService.getCheckout(cwd);
   }
 
-  private inspectDirectory(targetPath: string): DirectoryState {
+  private async inspectDirectory(targetPath: string): Promise<DirectoryState> {
     try {
-      return statSync(targetPath).isDirectory() ? "directory" : "missing";
+      return (await stat(targetPath)).isDirectory() ? "directory" : "missing";
     } catch (error) {
       if (isMissingPathError(error)) return "missing";
       this.logger.warn(

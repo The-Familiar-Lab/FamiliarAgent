@@ -4,9 +4,10 @@ FamiliarAgent connects existing agent tools, conversations and project folders a
 
 The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, terminals, editor, file explorer, Git worktrees, browser panels and plugin system. FamiliarAgent adds the integration layer; it is a separate project and is not an official Paseo release.
 
-**Current version: 0.13.0.** Adds selected result-to-input connections in a logical session. Local verification passed 1,262 tests, type checks, lint and daemon transport checks. The installed macOS app and Ubuntu runtime retain the documented session-switching, pointer-fork, original-history and restart-recovery behavior. This is a development distribution; see the scope and account-specific limits in the Hub guide.
+**Current source version: 0.14.0.** Adds original-tool actions, saved native settings and result connections within a logical session. The [native actions guide](docs/native-tool-actions.md) distinguishes actual native workflow checks from account prerequisites and unverified paths. The Mac desktop and Ubuntu runtime passed installed-bundle, native-action UI, same-session result delivery and cross-server lazy-read checks. The final fast check passed 1,394 tests plus type and lint checks. The earlier 0.13.0 distribution passed the documented session-switching, pointer-fork, original-history and restart-recovery checks.
 
 - [Using Familiar Hub](docs/familiar-hub.md)
+- [Native tool actions, result connections and verified scope](docs/native-tool-actions.md)
 - [Development, verification and source history](docs/familiar-development.md)
 - [Changelog](CHANGELOG.md)
 - [Source repository](https://github.com/The-Familiar-Lab/FamiliarAgent)
@@ -24,6 +25,8 @@ The desktop and runtime build on Paseo 0.11.1, reusing its chat, providers, term
 | Files and Git        | Reuse the file explorer, editor, media playback, uploads, downloads and Git/worktree operations. **Separate Git worktree** provides optional isolation.                                                                     |
 | History              | Discover supported Cursor, VS Code, Codex, Claude and Antigravity records. Search and hide/restore the index; read the original source on demand. ChatGPT history uses official export JSON.                                |
 | Discord              | Optionally connect AI Agent Discord Connector to a native agent or a logical session that follows its active native agent after a tool switch.                                                                              |
+
+The [native actions guide](docs/native-tool-actions.md) describes the new explicit CLI/API adapters, saved settings and result connections, including prerequisites and native workflows that remain unverified. Native workflow checks and final application release checks are recorded separately.
 
 The catalog contains different kinds of entries: CLI launch connections, installed desktop apps and reference projects requiring a command or URL. An entry is not a complete adapter for every feature of that project. Native provider sessions, terminal harnesses and external desktop apps expose different capabilities.
 

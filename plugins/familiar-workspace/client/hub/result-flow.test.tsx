@@ -212,6 +212,106 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("result input flow", () => {
+  it("routes a selected native result into a linked original tool without creating another native agent", async () => {
+    const toolEndpoint = {
+      ...targetEndpoint,
+      kind: "tool" as const,
+      agentId: "goose-endpoint",
+      provider: "goose",
+    };
+    stored!.endpoints.push(toolEndpoint);
+    const { result } = renderHook(() => useResultFlow(useTestHub(), "mac", route));
+    await waitFor(() => expect(result.current.draft?.session?.id).toBe("logical-A"));
+    act(() => result.current.setInstruction("Continue this result in Goose"));
+    await act(() =>
+      result.current.send({
+        serverId: "linux",
+        toolId: "goose",
+        cwd: "/linux/project",
+        action: "run",
+        parameters: { provider: "claude-code" },
+      }),
+    );
+    const prepared = mocks.rpc.mock.calls.find(
+      (call) => call[1].name === "composition.input.prepare",
+    )!;
+    expect(prepared[2]).toMatchObject({
+      id: "logical-A",
+      sourceEndpointId: sourceEndpoint.id,
+      targetEndpointId: toolEndpoint.id,
+      tool: { action: "run", parameters: { provider: "claude-code" } },
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(result.current.submitted?.input.state).toBe("accepted");
+  });
+  it("uses a completed original tool result as the source of a native continuation", async () => {
+    const toolEndpoint = {
+      ...sourceEndpoint,
+      kind: "tool" as const,
+      agentId: "goose-endpoint",
+      provider: "goose",
+    };
+    const toolCapture = {
+      ...capture,
+      anchor: {
+        ...capture.anchor,
+        resource: {
+          ...resource,
+          id: "tool-run",
+          format: "tool-result" as const,
+          locator: "run-id",
+          boundary: {
+            kind: "tool" as const,
+            toolId: "goose",
+            cwd: "/mac/project",
+            sessionId: "logical-A",
+            sha256,
+          },
+        },
+      },
+    };
+    stored!.endpoints = [toolEndpoint, targetEndpoint];
+    stored!.resources = [toolCapture.anchor.resource];
+    const previous = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation(async (...args: unknown[]) =>
+      (args[1] as { name: string }).name === "tools.run.capture" ? toolCapture : previous(...args),
+    );
+    const { result } = renderHook(() => useResultFlow(useTestHub(), "mac"));
+    await act(() =>
+      result.current.useToolResult({
+        id: "run-id",
+        serverId: "mac",
+        request: {
+          toolId: "goose",
+          action: "run",
+          cwd: "/mac/project",
+          sessionId: "logical-A",
+          input: "earlier prompt",
+          parameters: {},
+        },
+        state: "completed",
+        createdAt: "now",
+        updatedAt: "now",
+        result: { state: "completed", text: "older response" },
+        resultSha256: sha256,
+        error: null,
+      }),
+    );
+    act(() => result.current.setTargetKey(nativeTargetKey("linux", "target")));
+    await act(() => result.current.send());
+    const prepared = mocks.rpc.mock.calls.find(
+      (call) => call[1].name === "composition.input.prepare",
+    )!;
+    expect(prepared[2]).toMatchObject({
+      id: "logical-A",
+      sourceEndpointId: toolEndpoint.id,
+      targetEndpointId: targetEndpoint.id,
+      anchor: toolCapture.anchor,
+    });
+    expect(rpcNames()).not.toContain("composition.result.capture");
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
   it("preserves the complete original target after stateful title, path and model normalization during a lost acknowledgement", async () => {
     const { result } = renderHook(() => {
       const hub = useTestHub();

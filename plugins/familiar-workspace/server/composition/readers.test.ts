@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PaseoApi } from "@getpaseo/client";
-import type { CompositionResource } from "../../shared/composition.js";
+import { readCompositionSource, type CompositionResource } from "../../shared/composition.js";
 import { boundedSourceRead, localResourceReader, routedResourceReader } from "./readers.js";
 
 const resource: CompositionResource = {
@@ -43,9 +43,39 @@ function fixture() {
   const paseo = {
     agents: { ref: vi.fn(() => ({ timeline: { refetch } })) },
   } as unknown as PaseoApi;
-  return { refetch, history, reader: localResourceReader({ serverId: "mac", history, paseo }) };
+  return {
+    refetch,
+    history,
+    reader: localResourceReader({ serverId: "mac", history, paseo }),
+  };
 }
 describe("lazy composition sources", () => {
+  it("projects catalog coordinates out before crossing a strict source transport", async () => {
+    const catalogRead = {
+      id: "logical-session",
+      resourceId: resource.id,
+      revision: 2,
+      forwarded: true,
+      offset: 0,
+      limit: 1,
+      maxCharacters: 256,
+      captureBoundary: true,
+    };
+    const reader = vi.fn(async (source: CompositionResource, input) => {
+      readCompositionSource.input.parse({ resource: source, ...input });
+      return {
+        messages: [{ role: "assistant", text: "selected" }],
+        nextOffset: null,
+      };
+    });
+    await boundedSourceRead(resource, catalogRead, reader);
+    expect(reader).toHaveBeenCalledWith(resource, {
+      offset: 0,
+      limit: 1,
+      maxCharacters: 256,
+      captureBoundary: true,
+    });
+  });
   it("rejects a malformed frozen empty prefix without accessing the provider", async () => {
     const { reader, refetch } = fixture();
     await expect(
@@ -66,7 +96,10 @@ describe("lazy composition sources", () => {
   });
   it("uses frozen native cursors and rejects replaced source epochs", async () => {
     const { reader, refetch } = fixture();
-    const pinned = { ...resource, boundary: { kind: "native" as const, epoch: "epoch", seq: 20 } };
+    const pinned = {
+      ...resource,
+      boundary: { kind: "native" as const, epoch: "epoch", seq: 20 },
+    };
     await reader(pinned, { offset: 0, limit: 10, maxCharacters: 1000 });
     expect(refetch).toHaveBeenLastCalledWith({
       direction: "before",
@@ -96,7 +129,11 @@ describe("lazy composition sources", () => {
   });
   it("reads bounded native pages using canonical sequence cursors", async () => {
     const { reader, refetch } = fixture();
-    const page = await reader(resource, { offset: 0, limit: 10, maxCharacters: 1000 });
+    const page = await reader(resource, {
+      offset: 0,
+      limit: 10,
+      maxCharacters: 1000,
+    });
     expect(page.messages.map((item) => item.text)).toEqual(["Question", "Answer"]);
     expect(page.nextOffset).toBe(40);
     await reader(resource, { offset: 40, limit: 10, maxCharacters: 1000 });
