@@ -1,4 +1,5 @@
 import type { ToolPlan } from "../../shared/tool-catalog.js";
+import { nodeToolCommand } from "./setup-node.js";
 
 export interface IntegratedInstallRecipe {
   id: string;
@@ -92,20 +93,24 @@ export function integratedInstallPlan(options: {
   destination: string;
   cwd: string;
   node: string;
+  platform?: string;
 }): ToolPlan {
   return {
     toolId: options.recipe.id,
     action: "install",
     mode: "terminal",
     cwd: options.cwd,
-    command: options.node,
-    args: [
-      "-e",
-      INTEGRATED_INSTALL_DRIVER,
-      JSON.stringify(options.recipe),
-      options.destination,
+    ...nodeToolCommand(
       options.node,
-    ],
+      [
+        "-e",
+        INTEGRATED_INSTALL_DRIVER,
+        JSON.stringify(options.recipe),
+        options.destination,
+        options.node,
+      ],
+      options.platform,
+    ),
     notes: [
       "Downloads a pinned original release or source revision and verifies it before use. Source builds run upstream dependency and build scripts in a new private folder.",
       "Existing projects, original profiles and sign-in credentials are preserved. Installation does not claim that an agent account is ready.",

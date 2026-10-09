@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   openAgent: vi.fn(),
   openTerminal: vi.fn(),
   listModels: vi.fn(),
+  listModes: vi.fn(),
   refreshAgent: vi.fn(),
   send: vi.fn(),
   clientHost: vi.fn(),
@@ -28,7 +29,7 @@ vi.mock("@getpaseo/plugin/client", () => ({
   getPaseoClient: (serverId: string) => {
     mocks.clientHost(serverId);
     return {
-      providers: { listModels: mocks.listModels },
+      providers: { listModels: mocks.listModels, listModes: mocks.listModes },
       agents: {
         create: mocks.createAgent,
         ref: (id: string) => ({ id, refresh: mocks.refreshAgent, send: mocks.send }),
@@ -112,6 +113,7 @@ beforeEach(() => {
     models: [{ id: "model", label: "Model", isDefault: true }],
     error: null,
   });
+  mocks.listModes.mockResolvedValue({ modes: [{ id: "approval", label: "Ask before actions" }] });
   mocks.openWorkspace.mockResolvedValue({ id: "workspace" });
   mocks.createTerminal.mockResolvedValue({ id: "terminal" });
   mocks.send.mockResolvedValue(undefined);
@@ -943,4 +945,58 @@ it("clears a catalog failure after explicit refresh without setting global busy"
   expect(result.current.toolCatalogErrors.mac).toBe("");
   expect(result.current.tools.some((item) => item.serverId === "mac")).toBe(true);
   expect(result.current.busy).toBe(false);
+});
+
+it("validates the chosen setup model, thinking and permission mode before creating native work", async () => {
+  const { result } = renderHook(() => useHubController(props));
+  await waitFor(() => expect(result.current.tools.length).toBeGreaterThan(0));
+  mocks.listModels.mockResolvedValue({
+    models: [
+      { id: "chosen", label: "Chosen model", thinkingOptions: [{ id: "high", label: "High" }] },
+    ],
+  });
+  await act(async () =>
+    result.current.askSetup("linux", tool, {
+      provider: "codex",
+      cwd: "/remote/project",
+      model: "chosen",
+      thinkingOptionId: "high",
+      modeId: "approval",
+    }),
+  );
+  expect(mocks.createAgent).toHaveBeenCalledWith(
+    expect.objectContaining({
+      config: {
+        provider: "codex/chosen",
+        thinkingOptionId: "high",
+        modeId: "approval",
+      },
+    }),
+  );
+  expect(mocks.listModes).toHaveBeenCalledWith("codex", { cwd: "/remote/project" });
+  mocks.createAgent.mockClear();
+  mocks.send.mockClear();
+  await expect(
+    result.current.askSetup("linux", tool, {
+      provider: "codex",
+      cwd: "/remote/project",
+      model: "chosen",
+      modeId: "gone",
+    }),
+  ).rejects.toThrow("permission mode is unavailable");
+  await expect(
+    result.current.askSetup("linux", tool, {
+      provider: "codex",
+      cwd: "/remote/project",
+      model: "gone",
+    }),
+  ).rejects.toThrow("model is unavailable");
+  await expect(
+    result.current.askSetup("linux", tool, {
+      agentId: "chosen-agent",
+      model: "chosen",
+    }),
+  ).rejects.toThrow("keeps its current settings");
+  expect(mocks.createAgent).not.toHaveBeenCalled();
+  expect(mocks.send).not.toHaveBeenCalled();
 });

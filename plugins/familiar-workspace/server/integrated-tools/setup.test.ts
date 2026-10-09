@@ -192,8 +192,16 @@ it("verified native archive install is atomic, rejects bad checksums, and preser
       verify: ["native.txt"],
     };
     const destination = join(root, "native-install");
-    const plan = integratedInstallPlan({ recipe, destination, cwd: root, node: process.execPath });
-    await promisify(execFile)(plan.command!, plan.args, { timeout: 15_000 });
+    const node = join(root, "Electron Helper");
+    await writeFile(
+      node,
+      `#!/bin/sh\n[ "$ELECTRON_RUN_AS_NODE" = "1" ] || exit 42\nexec '${process.execPath.replaceAll("'", "'\\''")}' "$@"\n`,
+      { mode: 0o700 },
+    );
+    const plan = integratedInstallPlan({ recipe, destination, cwd: root, node });
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    await promisify(execFile)(plan.command!, plan.args, { env, timeout: 15_000 });
     expect(await readFile(join(destination, "native.txt"), "utf8")).toBe("original bytes");
     await expect(
       promisify(execFile)(process.execPath, [

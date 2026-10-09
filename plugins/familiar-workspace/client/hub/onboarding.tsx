@@ -1,6 +1,6 @@
 import { readWithDeadline } from "../read-deadline.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Modal, ScrollView, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import type { ToolEntry } from "../../shared/tool-catalog.js";
 import { readToolSetup, type ToolSetupStatus } from "../../shared/tool-setup.js";
 import { hostRpc } from "../fleet.js";
@@ -16,6 +16,24 @@ import {
 } from "./onboarding-state.js";
 
 const PROVIDERS = ["codex", "claude"];
+const CARD_HEADER = {
+  flexDirection: "row",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 12,
+} as const;
+const CHECKBOX = {
+  flex: 1,
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+  minHeight: 40,
+} as const;
+const NEXT = { alignItems: "flex-end", paddingTop: 10 } as const;
+interface SetupEngine {
+  serverId: string;
+  provider: string;
+}
 const OVERLAY = {
   flex: 1,
   backgroundColor: "rgba(0,0,0,0.5)",
@@ -70,6 +88,7 @@ export function useOnboarding(hub: HubController, explicitEntry = false) {
     },
   );
   const checked = useRef(false);
+  const [setupEngine, setSetupEngine] = useState<SetupEngine>();
   const update = useCallback(
     (value: Partial<SetupDraft>) => {
       setDraft((previous) => {
@@ -114,7 +133,12 @@ export function useOnboarding(hub: HubController, explicitEntry = false) {
           () => current && probe.current === version,
         );
         if (!current || probe.current !== version) return;
-        if (statuses.some((item) => item.status?.account === "signed-in")) {
+        const ready = statuses.find(
+          (item) =>
+            item.status?.installation === "installed" && item.status.account === "signed-in",
+        );
+        if (ready) {
+          setSetupEngine({ serverId: host.serverId, provider: ready.id });
           checked.current = true;
           update({ serverId: host.serverId, step: 2 });
           setVisible(true);
@@ -130,9 +154,11 @@ export function useOnboarding(hub: HubController, explicitEntry = false) {
       current = false;
     };
   }, [eligible, saved?.dismissed, onlineKey, update]);
-  return { visible, draft, update, open, close };
+  return { visible, draft, update, open, close, setupEngine };
 }
-export type OnboardingState = ReturnType<typeof useOnboarding>;
+export type OnboardingState = Omit<ReturnType<typeof useOnboarding>, "setupEngine"> & {
+  setupEngine?: SetupEngine;
+};
 
 export function HubOnboarding({
   hub,
@@ -144,7 +170,9 @@ export function HubOnboarding({
   state: OnboardingState;
 }) {
   const { draft, update } = state;
-  const [checks, setChecks] = useState<Check[]>([]);
+  const [checkResults, setChecks] = useState<Check[]>([]);
+  const [checkedScope, setCheckedScope] = useState("");
+  const [engines, setEngines] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
   const dialog = useMemo(
@@ -178,12 +206,16 @@ export function HubOnboarding({
   if (draft.step === 1) checkIds = PROVIDERS;
   if (draft.step === 4) checkIds = draft.toolIds;
   const checkKey = JSON.stringify(checkIds);
+  const scope = `${draft.serverId}:${checkKey}`;
+  const checks = checkedScope === scope ? checkResults : [];
+  const selectedProvider = chosenSetupEngine(engines, draft.serverId, state.setupEngine);
   const active = state.visible && !hub.setupTarget;
   const online = hub.online.some((host) => host.serverId === draft.serverId);
   useEffect(() => {
     let current = true;
     const ids = JSON.parse(checkKey) as string[];
     setChecks([]);
+    setCheckedScope(scope);
     if (!active || !online || !ids.length) {
       setBusy(false);
       return;
@@ -200,11 +232,30 @@ export function HubOnboarding({
     return () => {
       current = false;
     };
-  }, [draft.serverId, checkKey, revision, active, online]);
-  const signedIn = checks.some((item) => item.status?.account === "signed-in");
+  }, [draft.serverId, checkKey, revision, active, online, scope]);
+  const readyProviders = checks.filter(
+    (item) => item.status?.installation === "installed" && item.status.account === "signed-in",
+  );
+  const signedIn = readyProviders.length > 0;
+  const chooseProvider = (provider: string) =>
+    setEngines((previous) => ({ ...previous, [draft.serverId]: provider }));
+  const continueToTools = () => {
+    const provider =
+      readyProviders.find((item) => item.id === selectedProvider)?.id ?? readyProviders[0]?.id;
+    if (provider) {
+      chooseProvider(provider);
+      update({ step: 2 });
+    }
+  };
   const checkAgain = useCallback(() => setRevision((value) => value + 1), []);
   const requested = useCallback((serverId: string) => update({ serverId, step: 4 }), [update]);
-  const selectServer = useCallback((serverId: string) => update({ serverId }), [update]);
+  const selectServer = useCallback(
+    (serverId: string) => {
+      if (serverId !== draft.serverId)
+        update({ serverId, toolIds: [], step: Math.min(draft.step, 2) });
+    },
+    [draft.serverId, draft.step, update],
+  );
   const retryCatalog = useCallback(() => {
     void hub.reloadTools(draft.serverId);
   }, [hub, draft.serverId]);
@@ -238,19 +289,27 @@ export function HubOnboarding({
                 Use an existing account on this server. Supported tools reuse it through their
                 native adapters; credentials stay on the original server.
               </Text>
-              {PROVIDERS.map((id) => (
-                <View key={id} style={ui.card}>
-                  <Text style={ui.text}>{id === "codex" ? "Codex" : "Claude Code"}</Text>
-                  <SetupCheck check={checks.find((item) => item.id === id)} ui={ui} />
-                  {ui.button(
-                    `Connect ${id === "codex" ? "Codex" : "Claude Code"}`,
-                    () => hub.openSetup(draft.serverId, id),
-                    !online,
-                  )}
-                </View>
-              ))}
+              {PROVIDERS.map((id) => {
+                const ready = readyProviders.some((item) => item.id === id);
+                const name = id === "codex" ? "Codex" : "Claude Code";
+                const selectedEngine = selectedProvider === id;
+                return (
+                  <View key={id} style={ui.card}>
+                    <Text style={ui.text}>{name}</Text>
+                    <SetupCheck check={checks.find((item) => item.id === id)} ui={ui} />
+                    {ui.button(
+                      ready
+                        ? `${selectedEngine ? "Selected" : "Select"} ${name}`
+                        : `Connect ${name}`,
+                      () => (ready ? chooseProvider(id) : hub.openSetup(draft.serverId, id)),
+                      !online,
+                      ready && selectedEngine,
+                    )}
+                  </View>
+                );
+              })}
               {ui.button("Check connection", checkAgain, busy || !online)}
-              {ui.button("Continue to choose tools", () => update({ step: 2 }), !signedIn)}
+              {ui.button("Continue to choose tools", continueToTools, !signedIn)}
             </>
           ) : null}
           {draft.step === 2 ? (
@@ -269,9 +328,7 @@ export function HubOnboarding({
           {draft.step === 3 ? (
             <>
               <Text style={ui.sectionHeading}>3. Delegate setup</Text>
-              <Text style={ui.text}>
-                {selected.map((tool) => tool.name).join(", ") || "Choose tools first."}
-              </Text>
+              <Text style={ui.text}>{setupSummary(selected) || "Choose tools first."}</Text>
               <Text style={ui.muted}>
                 One explicit request asks the selected agent to set up every selected tool. It
                 checks existing installations, preserves accounts, and reports any login that needs
@@ -285,6 +342,7 @@ export function HubOnboarding({
                   tool={selected[0]}
                   tools={selected}
                   serverId={draft.serverId}
+                  preferredProvider={selectedProvider}
                   onRequested={requested}
                 />
               ) : null}
@@ -371,20 +429,35 @@ function ChooseTools({
   loading: boolean;
   retry: () => void;
 }) {
+  const eligible = catalog.filter((tool) => !tool.installed && canSetUp(tool));
+  const selectedUninstalled = selected.filter((tool) => !tool.installed && canSetUp(tool));
+  const availableSelections = selected.filter((tool) => tool.installed || canSetUp(tool));
+  const hasUnavailableSelection = availableSelections.length !== draft.toolIds.length;
+  const allSelected = eligible.every((tool) => draft.toolIds.includes(tool.id));
+  const batch = catalog.filter((tool) => tool.installed || selectedUninstalled.includes(tool));
+  const toggleTool = useCallback(
+    (id: string) =>
+      update({
+        toolIds: draft.toolIds.includes(id)
+          ? draft.toolIds.filter((value) => value !== id)
+          : [...draft.toolIds, id],
+      }),
+    [draft.toolIds, update],
+  );
   return (
     <>
       <Text style={ui.sectionHeading}>2. Choose your tools</Text>
       <Text style={ui.muted}>
-        Choose any number. About explains what each original tool does. Existing installations will
-        be checked before setup.
+        Choose tools to install. Installed tools are included for connection checks only; the setup
+        agent preserves their original installation and configures them only if needed.
       </Text>
-      {selected.length !== draft.toolIds.length ? (
+      {hasUnavailableSelection ? (
         <View>
           <Text style={ui.error}>
-            Some selected tools are not available in this server’s catalog.
+            Some selected tools are unavailable or need setup instructions on this server.
           </Text>
           {ui.button("Remove unavailable selections", () =>
-            update({ toolIds: selected.map((tool) => tool.id) }),
+            update({ toolIds: availableSelections.map((tool) => tool.id) }),
           )}
         </View>
       ) : null}
@@ -401,28 +474,110 @@ function ChooseTools({
         </Text>
       ) : null}
       {ui.button(loading ? "Loading catalog…" : "Retry tool catalog", retry, loading || !online)}
+      <View style={ROW}>
+        {ui.button(
+          "Select all",
+          () => update({ toolIds: eligible.map((tool) => tool.id) }),
+          !online || !eligible.length || allSelected,
+        )}
+        {ui.button(
+          "Clear selection",
+          () => update({ toolIds: [] }),
+          !online || !selectedUninstalled.length,
+        )}
+      </View>
       {catalog.map((tool) => (
-        <View key={tool.id} style={ui.card}>
-          {ui.button(
-            `${draft.toolIds.includes(tool.id) ? "✓ " : ""}${tool.name}`,
-            () =>
-              update({
-                toolIds: draft.toolIds.includes(tool.id)
-                  ? draft.toolIds.filter((id) => id !== tool.id)
-                  : [...draft.toolIds, tool.id],
-              }),
-            !online,
-            draft.toolIds.includes(tool.id),
-          )}
-          <ToolGuide tool={tool} ui={ui} />
-        </View>
+        <OnboardingToolCard
+          key={tool.id}
+          tool={tool}
+          ui={ui}
+          checked={draft.toolIds.includes(tool.id)}
+          online={online}
+          onToggle={toggleTool}
+        />
       ))}
-      {ui.button(
-        "Choose setup agent",
-        () => update({ step: 3 }),
-        !selected.length || selected.length !== draft.toolIds.length || !online,
-      )}
+      <Text style={ui.muted}>{setupSummary(batch)}</Text>
+      <View style={NEXT}>
+        {ui.button(
+          "Choose setup agent →",
+          () => update({ step: 3, toolIds: batch.map((tool) => tool.id) }),
+          !batch.length || hasUnavailableSelection || !online,
+          true,
+        )}
+      </View>
     </>
+  );
+}
+
+function canSetUp(tool: ToolEntry) {
+  return tool.installAvailable || Boolean(tool.sourceUrl) || tool.custom;
+}
+function chosenSetupEngine(
+  engines: Record<string, string>,
+  serverId: string,
+  detected?: SetupEngine,
+) {
+  return engines[serverId] ?? (detected?.serverId === serverId ? detected.provider : undefined);
+}
+function toolSetupLabel(tool: ToolEntry) {
+  if (tool.installed) return "Installed · connection check only";
+  if (canSetUp(tool)) return "Not installed";
+  return tool.installReason ?? "Add setup instructions before selecting this tool.";
+}
+function setupSummary(tools: ToolEntry[]) {
+  const install = tools.filter((tool) => !tool.installed);
+  const existing = tools.filter((tool) => tool.installed);
+  return [
+    install.length ? `Install: ${install.map((tool) => tool.name).join(", ")}` : "",
+    existing.length ? `Connection check only: ${existing.map((tool) => tool.name).join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+function OnboardingToolCard({
+  tool,
+  ui,
+  checked,
+  online,
+  onToggle,
+}: {
+  tool: ToolEntry;
+  ui: HubUi;
+  checked: boolean;
+  online: boolean;
+  onToggle: (id: string) => void;
+}) {
+  const disabled = tool.installed || !online || !canSetUp(tool);
+  const toggle = useCallback(() => onToggle(tool.id), [tool.id, onToggle]);
+  const checkboxState = useMemo(
+    () => ({ checked: tool.installed || checked, disabled }),
+    [tool.installed, checked, disabled],
+  );
+  const card = useMemo(
+    () =>
+      tool.installed
+        ? { ...ui.card, backgroundColor: ui.colors.surface2, borderColor: ui.colors.statusSuccess }
+        : ui.card,
+    [tool.installed, ui.card, ui.colors.surface2, ui.colors.statusSuccess],
+  );
+  return (
+    <View style={card}>
+      <View style={CARD_HEADER}>
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityLabel={tool.name}
+          accessibilityState={checkboxState}
+          disabled={disabled}
+          onPress={toggle}
+          style={CHECKBOX}
+        >
+          <Text style={ui.text}>{tool.installed || checked ? "☑" : "☐"}</Text>
+          <Text style={ui.text}>{tool.name}</Text>
+        </Pressable>
+        <ToolGuide tool={tool} ui={ui} compact />
+      </View>
+      <Text style={ui.muted}>{toolSetupLabel(tool)}</Text>
+    </View>
   );
 }
 

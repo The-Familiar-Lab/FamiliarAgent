@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import type { ToolPlan } from "../../shared/tool-catalog.js";
+import { nodeToolCommand } from "./setup-node.js";
 
 export async function privateProfile(folder: string) {
   await mkdir(folder, { recursive: true, mode: 0o700 });
@@ -52,6 +53,7 @@ export async function prepareCodegRuntime(options: {
   executable: string;
   node: string;
   cwd: string;
+  platform?: string;
 }) {
   await privateProfile(options.profile);
   const configuration = join(options.profile, "familiar-server.json");
@@ -89,8 +91,11 @@ export async function prepareCodegRuntime(options: {
     action: "launch",
     mode: "terminal",
     cwd: options.cwd,
-    command: options.node,
-    args: [launcher, options.executable, options.profile, configuration, tokenFile],
+    ...nodeToolCommand(
+      options.node,
+      [launcher, options.executable, options.profile, configuration, tokenFile],
+      options.platform,
+    ),
     notes: [
       "Starts the original Codeg server on loopback with a dedicated profile. The private token is read from a file and never placed in a URL or saved action parameters. Keep the terminal open while using Run actions.",
       "Use original Agent Settings to install and sign in to a provider. Installation does not imply authentication.",
@@ -110,9 +115,14 @@ export async function prepareCodegRuntime(options: {
 
 export async function prepareOrcaCli(node: string, entry: string, wrapper: string) {
   await privateProfile(dirname(wrapper));
-  await writeFile(wrapper, `#!/bin/sh\nexec ${shellQuote(node)} ${shellQuote(entry)} "$@"\n`, {
-    mode: 0o700,
-  });
+  const launch = nodeToolCommand(node, [entry], "darwin");
+  await writeFile(
+    wrapper,
+    `#!/bin/sh\nexec ${[launch.command, ...launch.args].map(shellQuote).join(" ")} "$@"\n`,
+    {
+      mode: 0o700,
+    },
+  );
 }
 
 function shellQuote(value: string) {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -25,6 +25,12 @@ interface PointerState {
   containerSize: number;
   pointerStart: number;
   drag: ResizeHandleDrag;
+  cancel: (updateState?: boolean) => void;
+}
+
+interface TouchState {
+  drag: ResizeHandleDrag;
+  cancel: () => void;
 }
 
 function resetWindowHorizontalScroll() {
@@ -49,12 +55,22 @@ export function ResizeHandle({
   const { theme } = useUnistyles();
   const finePointer = useHasFinePointer();
   const pointerStatesRef = useRef(new Map<number, PointerState>());
-  const touchDragRef = useRef<ResizeHandleDrag | null>(null);
+  const touchDragRef = useRef<TouchState | null>(null);
   const cursorBeforeDragRef = useRef<string | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [active, setActive] = useState(false);
   const [dragging, setDragging] = useState(false);
   const highlighted = active || dragging;
+
+  useEffect(() => {
+    const pointers = pointerStatesRef.current;
+    return () => {
+      for (const pointer of pointers.values()) pointer.cancel(false);
+      touchDragRef.current?.cancel();
+      touchDragRef.current = null;
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    };
+  }, []);
 
   const handlePointerDown = useCallback(
     (event: RNPointerEvent) => {
@@ -84,6 +100,7 @@ export function ResizeHandle({
           preview: (nextSizes) => onPreviewResizeSplit(groupId, nextSizes),
           commit: (nextSizes) => onResizeSplit(groupId, nextSizes),
         }),
+        cancel: cancelDrag,
       });
 
       if (pointerStatesRef.current.size === 1) {
@@ -97,20 +114,30 @@ export function ResizeHandle({
       pointerCaptureElement.setPointerCapture?.(pointerId);
       resetWindowHorizontalScroll();
 
-      function cleanup() {
+      function cleanup(updateState = true) {
         pointerStatesRef.current.delete(pointerId);
-        setDragging(pointerStatesRef.current.size > 0);
+        if (updateState) setDragging(pointerStatesRef.current.size > 0);
         if (pointerStatesRef.current.size === 0) {
           document.body.style.cursor = cursorBeforeDragRef.current ?? "";
           cursorBeforeDragRef.current = null;
         }
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerCancel);
+        pointerCaptureElement.removeEventListener("lostpointercapture", handlePointerCancel);
         if (pointerCaptureElement.hasPointerCapture?.(pointerId)) {
           pointerCaptureElement.releasePointerCapture(pointerId);
         }
         resetWindowHorizontalScroll();
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-        window.removeEventListener("pointercancel", handlePointerUp);
+      }
+
+      function cancelDrag(updateState = true) {
+        if (!pointerStatesRef.current.has(pointerId)) return;
+        try {
+          onPreviewResizeSplit(groupId, sizes);
+        } finally {
+          cleanup(updateState);
+        }
       }
 
       function handlePointerMove(moveEvent: PointerEvent) {
@@ -137,13 +164,21 @@ export function ResizeHandle({
           return;
         }
 
-        pointerStatesRef.current.get(pointerId)?.drag.finish();
-        cleanup();
+        try {
+          pointerStatesRef.current.get(pointerId)?.drag.finish();
+        } finally {
+          cleanup();
+        }
+      }
+
+      function handlePointerCancel(cancelEvent: PointerEvent) {
+        if (cancelEvent.pointerId === pointerId) cancelDrag();
       }
 
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", handlePointerUp);
-      window.addEventListener("pointercancel", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerCancel);
+      pointerCaptureElement.addEventListener("lostpointercapture", handlePointerCancel);
     },
     [containerSize, direction, groupId, index, onPreviewResizeSplit, onResizeSplit, sizes],
   );
@@ -153,20 +188,29 @@ export function ResizeHandle({
       .runOnJS(true)
       .onBegin(() => setDragging(true))
       .onStart(() => {
-        touchDragRef.current = startResizeHandleDrag({
-          sizes,
-          index,
-          preview: (nextSizes) => onPreviewResizeSplit(groupId, nextSizes),
-          commit: (nextSizes) => onResizeSplit(groupId, nextSizes),
-        });
+        touchDragRef.current = {
+          drag: startResizeHandleDrag({
+            sizes,
+            index,
+            preview: (nextSizes) => onPreviewResizeSplit(groupId, nextSizes),
+            commit: (nextSizes) => onResizeSplit(groupId, nextSizes),
+          }),
+          cancel: () => onPreviewResizeSplit(groupId, sizes),
+        };
       })
       .onUpdate((event) => {
         if (containerSize <= 0) return;
         const translation = direction === "horizontal" ? event.translationX : event.translationY;
-        touchDragRef.current?.move(translation / containerSize);
+        touchDragRef.current?.drag.move(translation / containerSize);
       })
-      .onEnd(() => touchDragRef.current?.finish())
+      .onEnd((_event, success) => {
+        if (!success) return;
+        const current = touchDragRef.current;
+        touchDragRef.current = null;
+        current?.drag.finish();
+      })
       .onFinalize(() => {
+        touchDragRef.current?.cancel();
         touchDragRef.current = null;
         setDragging(false);
       });
@@ -181,6 +225,7 @@ export function ResizeHandle({
   }, [containerSize, direction, groupId, index, onPreviewResizeSplit, onResizeSplit, sizes]);
 
   const handlePointerEnter = useCallback(() => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
       setActive(true);
     }, 150);

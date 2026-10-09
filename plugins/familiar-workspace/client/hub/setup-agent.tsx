@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import type { ToolEntry } from "../../shared/tool-catalog.js";
 import type { HubController } from "./controller.js";
 import { HubPicker, ROW, type HubUi } from "./ui.js";
+import { useSetupOptions } from "./setup-options.js";
 
 export function SetupAgentPicker({
   hub,
@@ -10,6 +11,7 @@ export function SetupAgentPicker({
   tool,
   serverId,
   tools,
+  preferredProvider,
   onRequested,
 }: {
   hub: HubController;
@@ -17,13 +19,19 @@ export function SetupAgentPicker({
   tool: ToolEntry;
   serverId: string;
   tools?: ToolEntry[];
+  preferredProvider?: string;
   onRequested?: (serverId: string) => void;
 }) {
   const [server, setServer] = useState(serverId);
-  const [agentKey, setAgentKey] = useState("");
+  const [agentKey, setAgentKey] = useState(
+    preferredProvider ? `provider:${preferredProvider}` : "",
+  );
   const [cwd, setCwd] = useState(hub.target === serverId ? hub.cwd : "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (preferredProvider && server === serverId) setAgentKey(`provider:${preferredProvider}`);
+  }, [preferredProvider, server, serverId]);
   const serverOptions = useMemo(
     () =>
       hub.hosts.map((host) => ({
@@ -59,17 +67,19 @@ export function SetupAgentPicker({
   const selected = options.some((option) => option.id === agentKey)
     ? agentKey
     : (options[0]?.id ?? "");
+  const provider = selected.startsWith("provider:") ? selected.slice(9) : "";
+  const configuration = useSetupOptions(server, provider, cwd);
   const selectServer = useCallback(
     (id: string) => {
       setServer(id);
-      setAgentKey("");
+      setAgentKey(preferredProvider && id === serverId ? `provider:${preferredProvider}` : "");
       setCwd(
         hub.project?.resources.find(
           (resource) => resource.kind === "codebase" && resource.serverId === id,
         )?.locator ?? "",
       );
     },
-    [hub.project],
+    [hub.project, preferredProvider, serverId],
   );
   const send = async () => {
     if (busy) return;
@@ -77,9 +87,17 @@ export function SetupAgentPicker({
     setError("");
     try {
       if (!selected) throw new Error("Set up an agent below first.");
+      if (provider && (configuration.loading || configuration.error || !configuration.model))
+        throw new Error("Check the setup agent options before sending.");
       const choice = selected.startsWith("agent:")
         ? { agentId: selected.slice(6), cwd }
-        : { provider: selected.slice(9), cwd };
+        : {
+            provider,
+            cwd,
+            model: configuration.model,
+            thinkingOptionId: configuration.thinking || undefined,
+            modeId: configuration.mode || undefined,
+          };
       await hub.askSetup(
         server,
         tool,
@@ -115,6 +133,14 @@ export function SetupAgentPicker({
             onChange={setAgentKey}
             ui={ui}
           />
+          {provider ? (
+            <SetupConfiguration configuration={configuration} ui={ui} />
+          ) : (
+            <Text style={ui.muted}>
+              This conversation keeps its current model, thinking and permissions. Choose a new
+              setup agent to configure them here.
+            </Text>
+          )}
           {ui.field("Setup project folder (optional)", cwd, setCwd)}
           <Text style={ui.muted}>
             Leave empty to use this server’s private setup folder for a new agent. An existing agent
@@ -125,7 +151,9 @@ export function SetupAgentPicker({
             () => {
               void send();
             },
-            busy,
+            busy ||
+              (!!provider &&
+                (configuration.loading || !!configuration.error || !configuration.model)),
           )}
         </>
       ) : (
@@ -143,5 +171,66 @@ export function SetupAgentPicker({
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function SetupConfiguration({
+  configuration,
+  ui,
+}: {
+  configuration: ReturnType<typeof useSetupOptions>;
+  ui: HubUi;
+}) {
+  const model = configuration.models.find((item) => item.id === configuration.model);
+  const mode = configuration.modes.find((item) => item.id === configuration.mode);
+  const thinkingOptions = useMemo(
+    () => [{ id: "", label: "Provider default" }, ...(model?.thinkingOptions ?? [])],
+    [model],
+  );
+  const modeOptions = useMemo(
+    () => [{ id: "", label: "Provider default" }, ...configuration.modes],
+    [configuration.modes],
+  );
+  if (configuration.loading)
+    return <Text style={ui.muted}>Loading model and permission options…</Text>;
+  if (configuration.error)
+    return (
+      <View>
+        <Text accessibilityRole="alert" style={ui.error}>
+          {configuration.error}
+        </Text>
+        {ui.button("Retry agent options", configuration.retry)}
+      </View>
+    );
+  return (
+    <>
+      <HubPicker
+        label="Setup model"
+        value={configuration.model}
+        options={configuration.models}
+        onChange={configuration.selectModel}
+        ui={ui}
+      />
+      {model?.thinkingOptions?.length ? (
+        <HubPicker
+          label="Setup thinking"
+          value={configuration.thinking}
+          options={thinkingOptions}
+          onChange={configuration.selectThinking}
+          ui={ui}
+        />
+      ) : null}
+      <HubPicker
+        label="Setup permission mode"
+        value={configuration.mode}
+        options={modeOptions}
+        onChange={configuration.selectMode}
+        ui={ui}
+      />
+      <Text style={ui.muted}>
+        {mode?.description ??
+          "The original provider controls approvals. You can answer any requests in the setup conversation."}
+      </Text>
+    </>
   );
 }

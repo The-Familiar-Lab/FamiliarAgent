@@ -5,7 +5,15 @@ import type { HubUi } from "./ui.js";
 
 const GAP = { gap: 6 };
 const HELP = { padding: 6, alignSelf: "flex-start" } as const;
-export function ToolGuide({ tool, ui }: { tool: ToolEntry; ui: HubUi }) {
+export function ToolGuide({
+  tool,
+  ui,
+  compact = false,
+}: {
+  tool: ToolEntry;
+  ui: HubUi;
+  compact?: boolean;
+}) {
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -29,7 +37,7 @@ export function ToolGuide({ tool, ui }: { tool: ToolEntry; ui: HubUi }) {
         onPress={toggle}
         style={HELP}
       >
-        <Text style={ui.text}>ⓘ About {tool.name}</Text>
+        <Text style={ui.text}>{compact ? "ⓘ" : `ⓘ About ${tool.name}`}</Text>
       </Pressable>
       {visible ? (
         <View style={ui.card}>

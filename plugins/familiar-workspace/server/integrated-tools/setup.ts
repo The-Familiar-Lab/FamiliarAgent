@@ -12,6 +12,7 @@ import { integratedRecipe, INTEGRATED_SETUP_IDS } from "./setup-recipes.js";
 import { HYDRA_COMPAT } from "./hydra-compat.js";
 import { prepareCodegRuntime, prepareOrcaCli, privateProfile } from "./setup-runtime.js";
 import { inspectDockerSkills } from "./docker-skills.js";
+import { nodeToolCommand } from "./setup-node.js";
 
 type Context = Pick<ToolActionContext, "resolveCommand" | "exec">;
 interface SetupOptions {
@@ -119,9 +120,14 @@ export async function integratedInstallation(root: string, id: string): Promise<
   return installed({ id, root, cwd: root });
 }
 
-async function compatibleNode(context: Context): Promise<string> {
+async function compatibleNode(
+  context: Context,
+  platform: string = process.platform,
+): Promise<string> {
   const candidates = [process.execPath, await optionalCommand(context, "node")].filter(
-    (value): value is string => Boolean(value),
+    (value): value is string =>
+      Boolean(value) &&
+      !(platform === "win32" && process.versions.electron && value === process.execPath),
   );
   for (const command of new Set(candidates)) {
     try {
@@ -294,8 +300,7 @@ async function prepareHydra(options: SetupOptions, node: string): Promise<ToolPl
     action: "launch",
     mode: "terminal",
     cwd: options.cwd,
-    command: node,
-    args: [launcher],
+    ...nodeToolCommand(node, [launcher], options.platform),
     notes: [
       "Starts the original Hydra daemon with its dedicated profile and the verified Claude stream compatibility launcher. Keep this terminal open while using Run actions.",
     ],
@@ -312,7 +317,7 @@ export async function prepareIntegratedSetup(
 } | null> {
   if (!INTEGRATED_SETUP_IDS.includes(options.id)) return null;
   const { recipe, directory, profile } = paths(options);
-  const node = await compatibleNode(context);
+  const node = await compatibleNode(context, options.platform);
   const settings = integratedActionDefaults(options, node);
   if (options.action === "install") {
     if (!recipe)
@@ -320,7 +325,13 @@ export async function prepareIntegratedSetup(
         "No verified original installer is available for this platform. Use the original release instructions.",
       );
     return {
-      plan: integratedInstallPlan({ recipe, destination: directory, cwd: options.cwd, node }),
+      plan: integratedInstallPlan({
+        recipe,
+        destination: directory,
+        cwd: options.cwd,
+        node,
+        platform: options.platform,
+      }),
       settings,
     };
   }
@@ -368,6 +379,7 @@ export async function prepareIntegratedSetup(
       executable: join(directory, recipe!.verify[0]!),
       node,
       cwd: options.cwd,
+      platform: options.platform,
     });
     return options.action === "start" ? prepared : { settings: prepared.settings };
   }

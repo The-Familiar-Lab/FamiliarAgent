@@ -49,7 +49,13 @@ import {
   type FleetSnapshot,
 } from "../fleet.js";
 import type { infer as Infer } from "zod";
-import { resolveSetupModel, setupInstructions, batchSetupInstructions } from "./setup.js";
+import {
+  resolveSetupConfiguration,
+  assertExistingSetupOptions,
+  setupInstructions,
+  batchSetupInstructions,
+  type SetupAgentChoice,
+} from "./setup.js";
 import { readResourceCatalog, type HostResources } from "./resources.js";
 import { readSetupWorkspace } from "../../shared/tool-setup.js";
 import { readHistory } from "../../shared/history.js";
@@ -1142,11 +1148,7 @@ export function useHubController(props: HubProps) {
       `Tool selected on ${hostName(serverId)}. Choose a native action or continue the session. Link this server's project folder if needed.`,
     );
   };
-  const askSetup = async (
-    serverId: string,
-    tool: ToolEntry,
-    choice?: { provider?: string; agentId?: string; cwd?: string; tools?: string[] },
-  ) => {
+  const askSetup = async (serverId: string, tool: ToolEntry, choice?: SetupAgentChoice) => {
     if (!hosts.some((item) => item.serverId === serverId && item.status === "online"))
       throw new Error("Reconnect the selected setup server first.");
     let directory = choice?.cwd ?? (target === serverId ? cwd : "");
@@ -1168,6 +1170,7 @@ export function useHubController(props: HubProps) {
         : setupInstructions(tool, folder, setupOnly, provider);
     const api = getPaseoClient(serverId);
     if (choice?.agentId) {
+      assertExistingSetupOptions(choice);
       const agent = api.agents.ref(choice.agentId);
       const snapshot = await agent.refresh();
       if (!snapshot) throw new Error("The selected setup agent is no longer available.");
@@ -1190,8 +1193,11 @@ export function useHubController(props: HubProps) {
             (!choice?.provider || item.tool.nativeProvider === choice.provider),
         )
         .map((item) => item.tool.nativeProvider!);
-      const selected = await resolveSetupModel(candidates, (provider) =>
-        api.providers.listModels(provider, { cwd: directory }),
+      const selected = await resolveSetupConfiguration(
+        candidates,
+        api.providers,
+        directory,
+        choice,
       );
       rememberSetupReturn(target, toolId);
       const agent = await api.agents.create({
@@ -1200,6 +1206,7 @@ export function useHubController(props: HubProps) {
         config: {
           provider: `${selected.provider}/${selected.model}`,
           thinkingOptionId: selected.thinking,
+          modeId: selected.modeId,
         },
         idempotencyKey: operationId(),
       });

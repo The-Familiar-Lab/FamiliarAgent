@@ -15,13 +15,48 @@ import { readSetupDraft, setupReadiness, type SetupDraft } from "./onboarding-st
 import type { HubController } from "./controller.js";
 import type { HubUi } from "./ui.js";
 import type { ToolSetupStatus } from "../../shared/tool-setup.js";
-const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), models: vi.fn(), modes: vi.fn() }));
 vi.mock("../fleet.js", () => ({ hostRpc: (...args: unknown[]) => mocks.rpc(...args) }));
+vi.mock("@getpaseo/plugin/client", () => ({
+  getPaseoClient: (server: string) => ({
+    providers: {
+      listModels: (provider: string) => mocks.models(server, provider),
+      listModes: (provider: string) => mocks.modes(server, provider),
+    },
+  }),
+}));
 vi.mock("react-native", () => ({
   View: "div",
   Text: "span",
   ScrollView: "div",
   Modal: ({ children }: { children: React.ReactNode }) => children,
+  Pressable: ({
+    children,
+    accessibilityRole,
+    accessibilityLabel,
+    accessibilityState,
+    disabled,
+    onPress,
+  }: {
+    children: React.ReactNode;
+    accessibilityRole: string;
+    accessibilityLabel: string;
+    accessibilityState: { checked: boolean };
+    disabled: boolean;
+    onPress: () => void;
+  }) =>
+    createElement(
+      "button",
+      {
+        type: "button",
+        role: accessibilityRole,
+        "aria-label": accessibilityLabel,
+        "aria-checked": accessibilityState.checked,
+        disabled,
+        onClick: onPress,
+      },
+      children,
+    ),
 }));
 vi.mock("./tool-guide.js", () => ({
   ToolGuide: ({ tool }: { tool: { name: string } }) =>
@@ -53,9 +88,13 @@ vi.mock("./ui.js", () => ({
     ),
 }));
 const ui = {
-  colors: {},
-  button: (label: string, click: () => void, disabled = false) =>
-    createElement("button", { type: "button", onClick: click, disabled }, label),
+  colors: { surface2: "#123456", statusSuccess: "#228833" },
+  button: (label: string, click: () => void, disabled = false, selected = false) =>
+    createElement(
+      "button",
+      { type: "button", onClick: click, disabled, "aria-pressed": selected },
+      label,
+    ),
   field: (label: string, value: string, onChange: (value: string) => void) =>
     createElement("input", {
       "aria-label": label,
@@ -78,7 +117,13 @@ function hub() {
     setupTarget: null,
     tools: ["codex", "goose", "agents"].map((id) => ({
       serverId: "mac",
-      tool: { id, name: id, installed: true, nativeProvider: id === "codex" ? "codex" : undefined },
+      tool: {
+        id,
+        name: id,
+        installed: id === "codex",
+        sourceUrl: `https://example.com/${id}`,
+        nativeProvider: id === "codex" ? "codex" : undefined,
+      },
     })),
     fleet: [],
     openSetup: vi.fn(),
@@ -97,9 +142,29 @@ function status(id: string, account: ToolSetupStatus["account"] = "signed-in"): 
     actions: [],
   };
 }
+function SetupFlow({ controller, step = 1 }: { controller: HubController; step?: number }) {
+  const [draft, setDraft] = useState<SetupDraft>({
+    serverId: "mac",
+    toolIds: [],
+    step,
+    dismissed: false,
+  });
+  const state = {
+    visible: true,
+    draft,
+    update: (next: Partial<SetupDraft>) => setDraft((old) => ({ ...old, ...next })),
+    open: vi.fn(),
+    close: vi.fn(),
+  };
+  return createElement(HubOnboarding, { hub: controller, ui, state });
+}
 beforeEach(() => {
   localStorage.clear();
   mocks.rpc.mockReset().mockImplementation(async (_server, _contract, input) => status(input.id));
+  mocks.models.mockReset().mockResolvedValue({
+    models: [{ id: "available-model", label: "Available model", isDefault: true }],
+  });
+  mocks.modes.mockReset().mockResolvedValue({ modes: [] });
 });
 afterEach(() => {
   cleanup();
@@ -121,6 +186,7 @@ it("does not interrupt existing projects or explicit entries, and skips repeated
   await waitFor(() => expect(signed.result.current.visible).toBe(true));
   expect(signed.result.current.draft.step).toBe(2);
   expect(signed.result.current.draft.serverId).toBe("mac");
+  expect(signed.result.current.setupEngine).toEqual({ serverId: "mac", provider: "codex" });
 });
 it("opens for verified first use without installed native accounts and persists dismissal", async () => {
   mocks.rpc.mockImplementation(async (_server, _contract, input) => ({
@@ -184,17 +250,25 @@ it("selects multiple tools and sends one explicit request, then shows truthful a
   fireEvent.click(screen.getByText("goose"));
   fireEvent.click(screen.getByText("agents"));
   expect(controller.askSetup).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByText("Choose setup agent"));
+  fireEvent.click(screen.getByText("Choose setup agent →"));
   expect(controller.askSetup).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect((screen.getByText("Ask selected agent") as HTMLButtonElement).disabled).toBe(false),
+  );
   fireEvent.click(screen.getByText("Ask selected agent"));
   await waitFor(() => expect(controller.askSetup).toHaveBeenCalledTimes(1));
   expect(controller.askSetup).toHaveBeenCalledWith(
     "mac",
-    expect.objectContaining({ id: "goose" }),
-    { provider: "codex", cwd: "/project", tools: ["goose", "agents"] },
+    expect.objectContaining({ id: "codex" }),
+    expect.objectContaining({
+      provider: "codex",
+      cwd: "/project",
+      model: "available-model",
+      tools: ["codex", "goose", "agents"],
+    }),
   );
   await screen.findByText("Installed · sign in needed");
-  expect(screen.getByText("Installed · account not verified")).toBeTruthy();
+  expect(screen.getAllByText("Installed · account not verified")).toHaveLength(2);
   expect((screen.getByText("Use goose") as HTMLButtonElement).disabled).toBe(true);
   expect(controller.useSetupTool).not.toHaveBeenCalled();
 });
@@ -217,6 +291,125 @@ it("cannot advance an installed but unauthenticated provider and offers native s
   expect((screen.getByText("Continue to choose tools") as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(screen.getByText("Connect Codex"));
   expect(controller.openSetup).toHaveBeenCalledWith("mac", "codex");
+  expect(controller.askSetup).not.toHaveBeenCalled();
+});
+it("selects a verified existing account as the setup engine without reopening sign-in", async () => {
+  const controller = hub();
+  controller.tools.push({
+    serverId: "mac",
+    tool: {
+      ...controller.tools[0]!.tool,
+      id: "claude",
+      name: "Claude Code",
+      nativeProvider: "claude",
+    },
+  });
+  render(createElement(SetupFlow, { controller }));
+  fireEvent.click(await screen.findByText("Select Claude Code"));
+  expect(screen.getByText("Selected Claude Code").getAttribute("aria-pressed")).toBe("true");
+  expect(controller.openSetup).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText("Continue to choose tools"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "goose" }));
+  fireEvent.click(screen.getByText("Choose setup agent →"));
+  expect((screen.getByLabelText("Setup agent") as HTMLSelectElement).value).toBe("provider:claude");
+  await waitFor(() =>
+    expect((screen.getByText("Ask selected agent") as HTMLButtonElement).disabled).toBe(false),
+  );
+  fireEvent.click(screen.getByText("Ask selected agent"));
+  await waitFor(() => expect(controller.askSetup).toHaveBeenCalledOnce());
+  expect(controller.askSetup).toHaveBeenCalledWith(
+    "mac",
+    expect.anything(),
+    expect.objectContaining({ provider: "claude", tools: ["codex", "goose", "claude"] }),
+  );
+  expect(mocks.models).toHaveBeenCalledWith("mac", "claude");
+});
+it("keeps installed tools checked for connection checks and selects only eligible new installations", () => {
+  const controller = hub();
+  controller.tools.push({
+    serverId: "mac",
+    tool: {
+      ...controller.tools[1]!.tool,
+      id: "unconfigured",
+      name: "Unconfigured tool",
+      sourceUrl: undefined,
+      installAvailable: false,
+      installReason: "Setup source required",
+    },
+  });
+  render(createElement(SetupFlow, { controller, step: 2 }));
+  const installed = screen.getByRole("checkbox", { name: "codex" }) as HTMLButtonElement;
+  expect(installed.disabled).toBe(true);
+  expect(installed.getAttribute("aria-checked")).toBe("true");
+  expect(installed.parentElement?.parentElement?.style.backgroundColor).toBe("rgb(18, 52, 86)");
+  expect(screen.getByText("Installed · connection check only")).toBeTruthy();
+  const unavailable = screen.getByRole("checkbox", {
+    name: "Unconfigured tool",
+  }) as HTMLButtonElement;
+  expect(unavailable.disabled).toBe(true);
+  fireEvent.click(screen.getByText("Select all"));
+  expect(screen.getByRole("checkbox", { name: "goose" }).getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByRole("checkbox", { name: "agents" }).getAttribute("aria-checked")).toBe(
+    "true",
+  );
+  expect(unavailable.getAttribute("aria-checked")).toBe("false");
+  expect(screen.getByText("Install: goose, agents · Connection check only: codex")).toBeTruthy();
+  expect(controller.askSetup).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText("Clear selection"));
+  expect(screen.getByRole("checkbox", { name: "goose" }).getAttribute("aria-checked")).toBe(
+    "false",
+  );
+  expect(installed.getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByText("Choose setup agent →").getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByText("Choose setup agent →"));
+  expect(screen.getByText("Connection check only: codex")).toBeTruthy();
+  expect(controller.askSetup).not.toHaveBeenCalled();
+});
+it("does not reuse the previous server's account status or chosen setup engine", async () => {
+  const controller = hub();
+  controller.hosts = [
+    ...controller.hosts,
+    { ...controller.hosts[0]!, serverId: "linux", label: "Linux" },
+  ];
+  controller.online = [...controller.hosts];
+  controller.tools.push({
+    serverId: "mac",
+    tool: {
+      ...controller.tools[0]!.tool,
+      id: "claude",
+      name: "Claude Code",
+      nativeProvider: "claude",
+    },
+  });
+  controller.tools.push(
+    ...controller.tools
+      .filter((item) => item.serverId === "mac")
+      .map((item) => Object.assign({}, item, { serverId: "linux" })),
+  );
+  let finish!: (value: ToolSetupStatus) => void;
+  mocks.rpc.mockImplementation((server, _contract, input) =>
+    server === "linux" && input.id === "codex"
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve(status(input.id, server === "linux" ? "sign-in-required" : "signed-in")),
+  );
+  render(createElement(SetupFlow, { controller }));
+  fireEvent.click(await screen.findByText("Select Claude Code"));
+  fireEvent.change(screen.getByLabelText("Installation server"), { target: { value: "linux" } });
+  expect(screen.queryByText("Selected Claude Code")).toBeNull();
+  expect(screen.queryByText("Select Codex")).toBeNull();
+  expect((screen.getByText("Continue to choose tools") as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => finish(status("codex")));
+  fireEvent.click(await screen.findByText("Select Codex"));
+  fireEvent.click(screen.getByText("Continue to choose tools"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "goose" }));
+  fireEvent.change(screen.getByLabelText("Installation server"), { target: { value: "mac" } });
+  expect(screen.getByRole("checkbox", { name: "goose" }).getAttribute("aria-checked")).toBe(
+    "false",
+  );
+  fireEvent.click(screen.getByText("Choose setup agent →"));
+  expect((screen.getByLabelText("Setup agent") as HTMLSelectElement).value).toBe("provider:claude");
   expect(controller.askSetup).not.toHaveBeenCalled();
 });
 it("navigation preferences tolerate unavailable storage without claiming readiness", () => {

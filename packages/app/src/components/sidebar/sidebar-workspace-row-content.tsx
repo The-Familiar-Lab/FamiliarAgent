@@ -29,6 +29,7 @@ import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import { useProjectViewDragSource } from "@/screens/workspace/use-project-view-drag-source";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const needsInputColorMapping = (theme: Theme) => ({
@@ -123,6 +124,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
+  const projectDragRef = useProjectViewDragSource({
+    selection: { serverId: workspace.serverId, workspaceId: workspace.workspaceId },
+    disabled: isLoading,
+  });
   // The workspace carries label names; their colors live in its host's catalog, so the row is
   // where the two meet — the meta line is handed finished definitions.
   const labels = useWorkspaceLabelDefinitions(workspace.serverId, workspace.labels);
@@ -158,9 +163,16 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         )}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
-            <Text style={workspaceBranchTextStyle} numberOfLines={1}>
-              {workspaceLabel}
-            </Text>
+            <View
+              ref={projectDragRef}
+              collapsable={false}
+              style={styles.workspaceDragLabel}
+              testID={`sidebar-project-drag-${workspace.workspaceKey}`}
+            >
+              <Text style={workspaceBranchTextStyle} numberOfLines={1}>
+                {workspaceLabel}
+              </Text>
+            </View>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
           <WorkspaceMetaRow
@@ -456,6 +468,7 @@ export function SidebarWorkspaceTrailingActionOverlay({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  workspaceDragLabel: { flex: 1, minWidth: 0 },
   workspaceRowContent: {
     position: "relative",
   },
