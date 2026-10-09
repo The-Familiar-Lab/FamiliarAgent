@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import React from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenTerminalWebView } from "@/terminal/runtime/use-terminal-web-view";
 import { PaneFocusProvider, PaneProvider, type PaneContextValue } from "./pane-context";
@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   openTab: vi.fn(),
   retarget: vi.fn(),
   closeTab: vi.fn(),
+  openHub: vi.fn(),
 }));
 vi.mock("@/components/terminal-pane", () => ({
   TerminalPane: (props: CapturedTerminal) => {
@@ -30,6 +31,7 @@ vi.mock("@/components/terminal-pane", () => ({
   },
 }));
 vi.mock("@/plugins/host-navigation", () => ({ prepareHostBrowserUrl: mocks.prepare }));
+vi.mock("@/plugins/familiar-navigation", () => ({ openFamiliarHub: mocks.openHub }));
 vi.mock("@/constants/platform", () => ({ getIsElectron: () => true }));
 vi.mock("@/desktop/browser/store", () => ({
   createWorkspaceBrowser: mocks.createBrowser,
@@ -107,6 +109,17 @@ afterEach(() => {
 });
 
 describe("terminal panel original web view", () => {
+  it("returns to this original terminal's shared session on its owning server", () => {
+    mountTerminal();
+    fireEvent.click(screen.getByRole("button", { name: "View session activity" }));
+    expect(mocks.openHub).toHaveBeenCalledWith({
+      serverId: "ssh-server",
+      workspaceId: "original-workspace",
+      cwd: "/original/project",
+      terminalId: "original-terminal",
+    });
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+  });
   it("opens a private browser in the same workspace without replacing or closing its terminal", async () => {
     const open = mountTerminal();
     const prepared = await open(view, undefined, new AbortController().signal);

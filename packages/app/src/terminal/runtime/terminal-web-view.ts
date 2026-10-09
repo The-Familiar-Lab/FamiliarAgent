@@ -10,27 +10,42 @@ const MAX_READINESS_LINE = 4096;
 const MAX_SNAPSHOT_ROWS = 500;
 
 function parseReadinessLine(line: string): TerminalWebView | null {
-  const match = /^Pullboard view: (http:\/\/[^\s]+)\s*$/.exec(line);
+  const pullboard = /^Pullboard view: (http:\/\/[^\s]+)\s*$/.exec(line);
+  const codeg = /^Codeg view: (http:\/\/[^\s]+)\s*$/.exec(line);
+  const dashboard = /^dashboard: (http:\/\/[^\s]+)(?:  \(already running\))?\s*$/.exec(line);
+  if (codeg) return parseLocalView("Codeg", codeg[1], false);
+  const match = pullboard ?? dashboard;
+  if (!match) return null;
+  return parseLocalView(pullboard ? "Pullboard" : "superharness", match[1], true);
+}
+
+function parseLocalView(
+  title: string,
+  address: string,
+  preserveHost: boolean,
+): TerminalWebView | null {
   if (
-    !match ||
-    [...match[1]].some(
+    [...address].some(
       (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === "\\",
     )
   )
     return null;
   try {
-    const url = new URL(match[1]);
+    const url = new URL(address);
     if (
+      url.protocol !== "http:" ||
       !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
       !url.port ||
       url.username ||
       url.password ||
       url.hash ||
       url.pathname !== "/" ||
-      !/^[A-Za-z0-9_-]+$/.test(url.searchParams.get("k") ?? "")
+      (title === "Pullboard"
+        ? !/^[A-Za-z0-9_-]+$/.test(url.searchParams.get("k") ?? "")
+        : Boolean(url.search))
     )
       return null;
-    return { title: "Pullboard", url: url.href, preserveHost: true };
+    return { title, url: url.href, preserveHost };
   } catch {
     return null;
   }
@@ -41,6 +56,8 @@ export class TerminalWebViewDetector {
   private decoder = new TextDecoder();
   private line = "";
   private overflow = false;
+  private pendingDashboard: TerminalWebView | null = null;
+  private pendingCodeg = false;
   private escape: "none" | "start" | "csi" | "osc" | "oscEnd" = "none";
 
   feed(data: Uint8Array | string): TerminalWebView | null {
@@ -49,7 +66,11 @@ export class TerminalWebViewDetector {
     for (const char of text) {
       if (this.consumeEscape(char)) continue;
       if (char === "\n") {
-        if (!this.overflow) latest = parseReadinessLine(this.line) ?? latest;
+        if (!this.overflow) latest = this.finishLine() ?? latest;
+        else {
+          this.pendingDashboard = null;
+          this.pendingCodeg = false;
+        }
         this.line = "";
         this.overflow = false;
       } else if (char !== "\r" && !this.overflow) {
@@ -61,6 +82,21 @@ export class TerminalWebViewDetector {
       }
     }
     return latest;
+  }
+
+  private finishLine(): TerminalWebView | null {
+    // Native readiness signatures include context, not arbitrary printed URLs.
+    let ready =
+      this.pendingDashboard && /^project: \S.*$/.test(this.line) ? this.pendingDashboard : null;
+    const codegLine = /^\d{4}-\d\d-\d\dT[\d:.]+Z\s+INFO\s+codeg_server:\s+(.*)$/.exec(
+      this.line,
+    )?.[1];
+    if (this.pendingCodeg && codegLine)
+      ready = parseLocalView("Codeg", codegLine.trim(), false) ?? ready;
+    this.pendingCodeg = codegLine?.trim() === "[SERVER] Listening on:";
+    const parsed = parseReadinessLine(this.line);
+    this.pendingDashboard = parsed?.title === "superharness" ? parsed : null;
+    return parsed && parsed.title !== "superharness" ? parsed : ready;
   }
 
   private consumeEscape(char: string): boolean {
@@ -106,6 +142,8 @@ export class TerminalWebViewDetector {
     this.decoder = new TextDecoder();
     this.line = "";
     this.overflow = false;
+    this.pendingDashboard = null;
+    this.pendingCodeg = false;
     this.escape = "none";
   }
 }

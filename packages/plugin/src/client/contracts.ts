@@ -38,6 +38,10 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly url: string;
       readonly workspaceId: string;
       readonly serverId?: string;
+      /** Keep native tool URLs, cookies and page state only for this app session. */
+      readonly ephemeral?: boolean;
+      /** Preserve the original loopback Host/Origin when forwarding an HTTP-only native UI. */
+      readonly preserveHost?: boolean;
     }) => void | Promise<void>;
     readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
     readonly openWorkspace: (input: {

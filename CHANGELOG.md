@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.4
+
+- Choose original desktop, terminal, browser or native action interfaces according to each tool's supported launch behavior.
+- Add session activity across connected hosts, original-interface and launcher links, selected action results and direct return from native chats/terminals.
+- Open superharness and Codeg readiness URLs in private project browser tabs; reuse verified Codeg servers without duplicate launches.
+- Preserve native status semantics and show failed/offline observations explicitly; stop polling hidden or inactive work.
+
 ## 0.16.3
 
 - Pullboard's original ready web interface opens automatically inside the same project, including on SSH hosts. The original terminal keeps its process running; **Open Pullboard** reopens its view.

@@ -64,6 +64,7 @@ export const toolEntry = z.object({
   guide: toolGuideSchema.optional(),
   capabilities: z.array(toolCapability),
   modes: z.array(z.enum(["agent", "terminal", "web", "desktop", "reference"])),
+  launchSurface: z.enum(["terminal", "desktop", "web", "actions"]).optional(),
   nativeProvider: z.string().optional(),
   sourceUrl: webUrl.optional(),
   license: z.string(),

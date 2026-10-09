@@ -42,9 +42,13 @@ interface HostNavigationOwner {
   openAgent(input: { serverId: string; agentId: string }): void;
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
-  createBrowser(input: { initialUrl: string }): { browserId: string };
+  createBrowser(input: { initialUrl: string; ephemeral?: boolean }): { browserId: string };
   openServers?(): void;
-  prepareBrowserUrl?(input: { serverId: string; url: string }): Promise<string>;
+  prepareBrowserUrl?(input: {
+    serverId: string;
+    url: string;
+    preserveHost?: boolean;
+  }): Promise<string>;
 }
 
 export function createPluginHostNavigation(
@@ -81,7 +85,7 @@ export function createPluginHostNavigation(
         workspaceId,
       }),
     openBrowser: owner.browserAvailable
-      ? ({ url, workspaceId, serverId: targetServerId }) => {
+      ? ({ url, workspaceId, serverId: targetServerId, ephemeral, preserveHost }) => {
           if (!isHttpUrl(url)) throw new Error("Only absolute HTTP(S) URLs are supported.");
           const destination = workspace({
             serverId: targetServerId,
@@ -97,6 +101,7 @@ export function createPluginHostNavigation(
             });
             const { browserId } = owner.createBrowser({
               initialUrl: preparedUrl,
+              ...(ephemeral ? { ephemeral: true } : {}),
             });
             owner.openWorkspace({
               ...current,
@@ -104,7 +109,13 @@ export function createPluginHostNavigation(
             });
           };
           if (owner.prepareBrowserUrl)
-            return owner.prepareBrowserUrl({ serverId: destination.serverId, url }).then(open);
+            return owner
+              .prepareBrowserUrl({
+                serverId: destination.serverId,
+                url,
+                ...(preserveHost ? { preserveHost: true } : {}),
+              })
+              .then(open);
           open(url);
         }
       : undefined,

@@ -131,6 +131,42 @@ describe("plugin host navigation", () => {
     expect(browsers).toEqual([]);
   });
 
+  it("keeps original tool views private and forwards their explicit Host requirement", async () => {
+    const events: unknown[] = [];
+    const navigation = createPluginHostNavigation("local", {
+      browserAvailable: true,
+      resolveWorkspace: ({ workspaceId }) => workspaceId,
+      openAgent: () => {},
+      openWorkspace: (input) => {
+        events.push(input);
+      },
+      prepareBrowserUrl: async (input) => {
+        events.push(input);
+        return "http://127.0.0.1:51000/?k=test-key";
+      },
+      createBrowser: (input) => {
+        events.push(input);
+        return { browserId: "private-view" };
+      },
+    });
+    await navigation.openBrowser!({
+      serverId: "remote",
+      workspaceId: "project",
+      url: "http://127.0.0.1:41000/?k=test-key",
+      ephemeral: true,
+      preserveHost: true,
+    });
+    expect(events).toEqual([
+      { serverId: "remote", url: "http://127.0.0.1:41000/?k=test-key", preserveHost: true },
+      { initialUrl: "http://127.0.0.1:51000/?k=test-key", ephemeral: true },
+      {
+        serverId: "remote",
+        workspaceId: "project",
+        target: { kind: "browser", browserId: "private-view" },
+      },
+    ]);
+  });
+
   it.each(["javascript:alert(1)", "file:///tmp/file", "/relative", "invalid"])(
     "rejects %s before creating a browser",
     (url) => {

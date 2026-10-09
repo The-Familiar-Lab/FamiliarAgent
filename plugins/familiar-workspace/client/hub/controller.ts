@@ -9,12 +9,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import {
-  getPaseoClient,
-  openExternalUrl,
-  useHosts,
-  type PluginSurfaceProps,
-} from "@getpaseo/plugin/client";
+import { getPaseoClient, useHosts, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { PaseoAgent, PaseoAgentHandle, PaseoProviderModelsResult } from "@getpaseo/client";
 import {
   bindComposition,
@@ -27,6 +22,7 @@ import {
   updateComposition,
   type CompositionProject,
   type CompositionSession,
+  type CompositionEndpoint,
   compositionRuntime,
   type CompositionResource,
   compositionProjectSummary,
@@ -60,6 +56,7 @@ import { readResourceCatalog, type HostResources } from "./resources.js";
 import { readSetupWorkspace } from "../../shared/tool-setup.js";
 import { readHistory } from "../../shared/history.js";
 import { findNativeSession, CATALOG_PAGE_SIZE, forkWorktree } from "./entry.js";
+import { prepareOriginalView } from "./original-view.js";
 import type { SessionChoice } from "./browse.js";
 import {
   TABS,
@@ -172,6 +169,11 @@ export function useHubController(props: HubProps) {
     [modelId, setModelId] = useState(""),
     [thinking, setThinking] = useState("");
   const [memory, setMemory] = useState("");
+  const [pendingLaunch, setPendingLaunch] = useState<{
+    sessionId: string;
+    endpoint: Omit<CompositionEndpoint, "id" | "createdAt">;
+    open: () => Promise<void>;
+  } | null>(null);
   const [toolSettingsVersions, setToolSettingsVersions] = useState<Record<string, number>>({});
   const updatedToolSettings = useCallback((serverId: string, id: string) => {
     const key = `${serverId}:${id}`;
@@ -234,6 +236,7 @@ export function useHubController(props: HubProps) {
   );
   const explicitEntry = Boolean(
     props.params?.agentId ||
+    props.params?.terminalId ||
     props.params?.toolId ||
     (props.params?.historyServerId && props.params?.historyId),
   );
@@ -745,6 +748,7 @@ export function useHubController(props: HubProps) {
   const start = async (fork: boolean) => {
     if (!selectedTool?.nativeProvider || !modelId)
       throw new Error("Choose an available native agent and model.");
+    if (!navigation?.openAgent) throw new Error("This view cannot open native conversations.");
     const owner = await ensureProject();
     if (
       !owner.resources.some(
@@ -757,7 +761,7 @@ export function useHubController(props: HubProps) {
     const logical = await logicalForLaunch(owner, target, fork);
     const { handle } = await createNativeTarget(owner, logical, { fork });
     await refresh();
-    navigation?.openAgent({ serverId: target, agentId: handle.id });
+    navigation.openAgent({ serverId: target, agentId: handle.id });
   };
   const nativeTargetSelection = (): NativeTargetSelection => {
     if (!selectedTool?.nativeProvider || !modelId)
@@ -824,6 +828,39 @@ export function useHubController(props: HubProps) {
     });
     return { logical, contextPath: saved.path };
   };
+  const finishExternalLaunch = async (pending: NonNullable<typeof pendingLaunch>) => {
+    const current = await hostRpc(host.id, readComposition, { id: pending.sessionId });
+    const linked = current.endpoints.find(
+      (item) =>
+        item.serverId === pending.endpoint.serverId &&
+        item.kind === pending.endpoint.kind &&
+        item.agentId === pending.endpoint.agentId,
+    );
+    const next = linked
+      ? current
+      : await hostRpc(host.id, bindComposition, {
+          id: current.id,
+          expectedRevision: current.revision,
+          operationId: operationId(),
+          endpoint: pending.endpoint,
+        });
+    setSession(next);
+    setPendingLaunch(null);
+    await refresh();
+    await renewLinkedSession(next);
+    await pending.open();
+  };
+  const recoverLaunch = async () => {
+    if (!pendingLaunch || pendingLaunch.sessionId !== session?.id)
+      throw new Error("Select the session that owns this original tool before linking it.");
+    await finishExternalLaunch(pendingLaunch);
+  };
+  const showToolActions = (serverId: string, id: string, directory: string) => {
+    setTarget(serverId);
+    setCwd(directory);
+    setToolId(id);
+    setTab("Tools");
+  };
   const launch = async (
     serverId: string,
     tool: ToolEntry,
@@ -831,12 +868,23 @@ export function useHubController(props: HubProps) {
     surface?: "web" | "desktop" | "terminal",
     options: { fork?: boolean } = {},
   ) => {
+    if (pendingLaunch && pendingLaunch.sessionId === session?.id)
+      throw new Error(
+        "Retry linking the existing original interface before starting another launch.",
+      );
     if (!cwd) throw new Error("Choose the destination project folder first.");
     const destination = hosts.find((item) => item.serverId === serverId);
+    if (destination?.status !== "online")
+      throw new Error("Reconnect this server before opening its original tool.");
     const { logical, contextPath } =
       action === "launch"
         ? await prepareExternalContext(serverId, options.fork === true)
         : { logical: null, contextPath: undefined };
+    if (action === "launch" && !surface && tool.launchSurface === "actions") {
+      showToolActions(serverId, tool.id, cwd);
+      setNotice("Choose an original action below. No task has been started.");
+      return;
+    }
     const plan = await hostRpc(serverId, prepareTool, {
       id: tool.id,
       action,
@@ -845,91 +893,104 @@ export function useHubController(props: HubProps) {
       contextPath,
       sessionId: action === "launch" ? logical?.id : undefined,
     });
-    const api = getPaseoClient(serverId),
-      workspace = await api.workspaces.open({ cwd });
-    let endpoint;
-    if (plan.url) {
-      endpoint = { kind: "web" as const, agentId: tool.id, url: plan.url };
-      if (navigation?.openBrowser)
-        await navigation.openBrowser({
-          url: plan.url,
-          workspaceId: workspace.id,
-          serverId,
-        });
-      else await openExternalUrl(plan.url);
-    } else {
-      if (!plan.command) throw new Error("The tool did not return a launch command.");
-      const terminal = await api.terminals.create({
-        workspaceId: workspace.id,
-        cwd,
-        name: `${action === "install" ? "Install " : ""}${tool.name}`,
-        command: plan.command,
-        args: plan.args,
-      });
-      endpoint = {
-        kind: plan.mode === "desktop" ? ("desktop" as const) : ("terminal" as const),
-        agentId: terminal.id,
-      };
-      navigation?.openTerminal?.({
-        serverId,
-        workspaceId: workspace.id,
-        terminalId: terminal.id,
-      });
-    }
+    const view = await prepareOriginalView({ serverId, tool, plan, navigation });
     if (logical && action === "launch") {
-      const next = await hostRpc(host.id, bindComposition, {
-        id: logical.id,
-        expectedRevision: logical.revision,
-        operationId: operationId(),
+      const pending = {
+        sessionId: logical.id,
         endpoint: {
-          ...endpoint,
+          ...view.endpoint,
           serverId,
-          connection: destination?.connection,
+          connection: destination.connection,
           provider: tool.id,
           harness: tool.id,
-          cwd,
-          workspaceId: workspace.id,
         },
-      });
-      setSession(next);
-      await refresh();
-      await renewLinkedSession(next);
-    }
+        open: view.open,
+      };
+      setPendingLaunch(pending);
+      try {
+        await finishExternalLaunch(pending);
+      } catch (value) {
+        throw new Error(
+          `The original interface was created. Its task completion is not confirmed. If linking failed, use Retry linking original; if linked, use Open original. ${value instanceof Error ? value.message : String(value)}`,
+          { cause: value },
+        );
+      }
+    } else await view.open();
     setNotice(
-      [...plan.notes, ...(contextPath ? [`Shared context file: ${contextPath}`] : [])].join("\n"),
+      [
+        ...(plan.mode === "desktop"
+          ? [
+              "Original app launch requested. Follow Session activity or View launcher for its status; task progress remains in the original app.",
+            ]
+          : []),
+        ...plan.notes,
+      ].join("\n"),
     );
   };
-  const openEndpoint = async (
-    endpoint: CompositionSession["endpoints"][number],
-    logicalId: string,
-  ) => {
+  const openEndpoint = async (endpoint: Pick<CompositionEndpoint, "id">, logicalId: string) => {
     const logical = await hostRpc(host.id, readComposition, { id: logicalId });
-    const destination = hosts.find((item) => item.serverId === endpoint.serverId);
-    if (destination?.status === "online")
-      await connectContextSources(host.id, logical, destination, hosts);
-    if (endpoint.kind === "tool") {
+    const original = logical.endpoints.find((item) => item.id === endpoint.id);
+    if (!original)
+      throw new Error("This original interface is no longer linked. Refresh the session.");
+    const destination = hosts.find((item) => item.serverId === original.serverId);
+    if (destination?.status !== "online")
+      throw new Error("Reconnect this server before opening its original tool.");
+    await connectContextSources(host.id, logical, destination, hosts);
+    if (original.kind === "tool") {
       setSession(logical);
-      setTarget(endpoint.serverId);
-      setCwd(endpoint.cwd);
-      setToolId(endpoint.provider);
-      setTab("Tools");
-    } else if (endpoint.kind === "agent")
-      navigation?.openAgent({
-        serverId: endpoint.serverId,
-        agentId: endpoint.agentId,
+      showToolActions(original.serverId, original.provider, original.cwd);
+      return;
+    }
+    if (original.kind === "agent") {
+      if (!navigation?.openAgent) throw new Error("This view cannot open native conversations.");
+      navigation.openAgent({ serverId: original.serverId, agentId: original.agentId });
+      return;
+    }
+    if (original.kind === "desktop" || original.kind === "web") {
+      if (pendingLaunch?.sessionId === logical.id)
+        throw new Error(
+          "Retry linking the existing original interface before starting another launch.",
+        );
+      const available = await hostRpc(original.serverId, listTools, {});
+      const tool = available.find((item) => item.id === (original.harness ?? original.provider));
+      if (!tool) throw new Error("This tool is no longer in the server catalog. Check its setup.");
+      const plan = await hostRpc(original.serverId, prepareTool, {
+        id: tool.id,
+        action: "launch",
+        cwd: original.cwd,
+        sessionId: logical.id,
+        surface: original.kind,
       });
-    else if (endpoint.kind === "web" && endpoint.url && endpoint.workspaceId)
-      await navigation?.openBrowser?.({
-        serverId: endpoint.serverId,
-        workspaceId: endpoint.workspaceId,
-        url: endpoint.url,
+      const view = await prepareOriginalView({
+        serverId: original.serverId,
+        tool,
+        plan,
+        navigation,
       });
-    else if (endpoint.workspaceId)
-      navigation?.openTerminal?.({
-        serverId: endpoint.serverId,
-        workspaceId: endpoint.workspaceId,
-        terminalId: endpoint.agentId,
-      });
+      const pending = {
+        sessionId: logical.id,
+        endpoint: {
+          ...view.endpoint,
+          serverId: original.serverId,
+          connection: destination.connection,
+          provider: tool.id,
+          harness: tool.id,
+        },
+        open: view.open,
+      };
+      setPendingLaunch(pending);
+      await finishExternalLaunch(pending);
+      return;
+    }
+    if (!original.workspaceId || !navigation?.openTerminal)
+      throw new Error(
+        "The original terminal cannot be opened from this view. Check its setup to launch again.",
+      );
+    navigation.openTerminal({
+      serverId: original.serverId,
+      workspaceId: original.workspaceId,
+      terminalId: original.agentId,
+    });
   };
   const linkHistory = useCallback(
     async (serverId: string, conversation: import("../../shared/history.js").HistorySummary) => {
@@ -985,6 +1046,65 @@ export function useHubController(props: HubProps) {
     [project, session, host.id, hosts, refresh, renewLinkedSession],
   );
   const entryKey = useRef<string | null>(null);
+  const [terminalEntryFailure, setTerminalEntryFailure] = useState<string | null>(null);
+  useEffect(() => {
+    const params = props.params;
+    if (!catalogOnline || !params?.terminalId || params.agentId) return;
+    const serverId = params.serverId ?? entryHost.id;
+    const terminalId = params.terminalId;
+    const key = JSON.stringify(["terminal", host.id, serverId, terminalId, params.cwd]);
+    if (entryKey.current === key || terminalEntryFailure === key) return;
+    entryKey.current = key;
+    setTerminalEntryFailure(null);
+    const version = restoreVersion.current;
+    const resolveEntry = async () => {
+      const existing = await findNativeSession(serverId, terminalId, (input) =>
+        hostRpc(host.id, listComposition, input),
+      );
+      if (entryKey.current !== key || version !== restoreVersion.current) return;
+      if (existing) {
+        if (!(await selectSession(existing.id)) || entryKey.current !== key) return;
+        const origin = existing.endpoints.find(
+          (item) => item.serverId === serverId && item.agentId === terminalId,
+        );
+        if (origin) {
+          setTarget(serverId);
+          setCwd(origin.cwd);
+          setToolId(origin.harness ?? origin.provider);
+        }
+      } else {
+        setProject(null);
+        setSession(null);
+        setEntryChoice(null);
+        setMemory("");
+        setTitle("");
+        setTarget(serverId);
+        setCwd(params.cwd ?? "");
+        setTab("Sessions");
+        setNotice(
+          "This terminal is not linked to a shared session yet. Choose or create a session in its project folder.",
+        );
+      }
+    };
+    void run(async () => {
+      try {
+        await resolveEntry();
+      } catch (value) {
+        if (entryKey.current !== key) return;
+        entryKey.current = null;
+        setTerminalEntryFailure(key);
+        throw value;
+      }
+    });
+  }, [
+    props.params,
+    catalogOnline,
+    entryHost.id,
+    host.id,
+    run,
+    selectSession,
+    terminalEntryFailure,
+  ]);
   useEffect(() => {
     const params = props.params;
     if (!catalogOnline || (!params?.agentId && !(params?.historyServerId && params?.historyId)))
@@ -1052,7 +1172,7 @@ export function useHubController(props: HubProps) {
   }, [props.params, host.id, entryHost.id, catalogOnline, run, linkHistory, selectSession]);
   useEffect(() => {
     const params = props.params;
-    if (!params?.toolId || params.agentId) return;
+    if (!params?.toolId || params.agentId || params.terminalId) return;
     const key = JSON.stringify([params.serverId, params.toolId, params.setup, params.cwd]);
     if (entryKey.current === key) return;
     entryKey.current = key;
@@ -1224,6 +1344,8 @@ export function useHubController(props: HubProps) {
     host,
     entryChoice,
     catalogLoaded,
+    terminalEntryFailed: terminalEntryFailure !== null,
+    retryTerminalEntry: () => setTerminalEntryFailure(null),
     useSetupTool,
     theme,
     navigation,
@@ -1327,6 +1449,8 @@ export function useHubController(props: HubProps) {
     createNativeTarget,
     nativeTargetSelection,
     launch,
+    pendingLaunch,
+    recoverLaunch,
     openEndpoint,
     linkHistory,
   };

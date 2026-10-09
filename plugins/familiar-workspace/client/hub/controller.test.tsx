@@ -165,7 +165,15 @@ beforeEach(() => {
         case "tools.context":
           return { path: "/context/session.md" };
         case "tools.prepare":
-          return { command: "goose", args: [], mode: "terminal", notes: [] };
+          return {
+            toolId: input.id,
+            action: input.action,
+            cwd: input.cwd,
+            command: "goose",
+            args: [],
+            mode: "terminal",
+            notes: [],
+          };
         default:
           throw new Error(`Unexpected RPC: ${contract.name}`);
       }
@@ -344,6 +352,12 @@ describe("Familiar Hub action wiring", () => {
       cwd: "/remote/project",
       createdAt: "now",
     };
+    const original = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation((server, contract, input) =>
+      contract.name === "composition.read"
+        ? { ...session, id: input.id, endpoints: [endpoint] }
+        : original(server, contract, input),
+    );
     await act(async () => result.current.openEndpoint(endpoint, "another-session"));
     expect(mocks.connectSources).toHaveBeenCalledWith(
       "mac",
@@ -999,4 +1013,268 @@ it("validates the chosen setup model, thinking and permission mode before creati
   ).rejects.toThrow("keeps its current settings");
   expect(mocks.createAgent).not.toHaveBeenCalled();
   expect(mocks.send).not.toHaveBeenCalled();
+});
+
+it("recovers a failed link without launching a duplicate original process", async () => {
+  const original = mocks.rpc.getMockImplementation()!;
+  let failBind = true;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "composition.bind" && failBind) throw new Error("Connection interrupted");
+    return original(server, contract, input);
+  });
+  const { result } = renderHook(() => useHubController(props));
+  act(() => {
+    result.current.setProject(project);
+    result.current.setSession(session);
+    result.current.setCwd("/project");
+  });
+  await act(async () => {
+    await expect(result.current.launch("mac", tool, "launch")).rejects.toThrow(
+      "Retry linking original",
+    );
+  });
+  expect(result.current.pendingLaunch?.sessionId).toBe(session.id);
+  expect(mocks.createTerminal).toHaveBeenCalledTimes(1);
+  expect(mocks.openTerminal).not.toHaveBeenCalled();
+  await expect(result.current.launch("mac", tool, "launch")).rejects.toThrow("Retry linking");
+  failBind = false;
+  await act(async () => result.current.recoverLaunch());
+  expect(mocks.createTerminal).toHaveBeenCalledTimes(1);
+  expect(result.current.pendingLaunch).toBeNull();
+  expect(result.current.session?.id).toBe(session.id);
+  expect(mocks.openTerminal).toHaveBeenCalledTimes(1);
+});
+
+it("routes an action-only tool into the same logical session without spawning its no-args CLI", async () => {
+  const { result } = renderHook(() => useHubController(props));
+  act(() => {
+    result.current.setProject(project);
+    result.current.setSession(session);
+    result.current.setCwd("/project");
+  });
+  await act(async () =>
+    result.current.launch("mac", { ...tool, id: "bssh", launchSurface: "actions" }, "launch"),
+  );
+  expect(result.current.session?.id).toBe(session.id);
+  expect(result.current.tab).toBe("Tools");
+  expect(result.current.toolId).toBe("bssh");
+  expect(result.current.cwd).toBe("/project");
+  expect(calls("tools.prepare")).toHaveLength(0);
+  expect(mocks.createTerminal).not.toHaveBeenCalled();
+  expect(calls("composition.create")).toHaveLength(0);
+});
+
+it("reopens an original desktop app using its owning project instead of navigating an exited launcher", async () => {
+  const endpoint = {
+    id: "desktop",
+    kind: "desktop" as const,
+    serverId: "linux",
+    agentId: "old-launcher",
+    provider: "orca",
+    harness: "orca",
+    cwd: "/remote/original",
+    workspaceId: "old-workspace",
+    createdAt: "now",
+  };
+  const original = mocks.rpc.getMockImplementation()!;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "composition.read")
+      return { ...session, id: input.id, endpoints: [endpoint] };
+    if (contract.name === "tools.list") return [{ ...tool, id: "orca", name: "Orca" }];
+    if (contract.name === "tools.prepare")
+      return {
+        toolId: "orca",
+        action: "launch",
+        cwd: input.cwd,
+        mode: "desktop",
+        command: "original-app",
+        args: ["--existing"],
+        notes: [],
+      };
+    return original(server, contract, input);
+  });
+  const { result } = renderHook(() => useHubController(props));
+  await act(async () => result.current.openEndpoint(endpoint, "correct-session"));
+  expect(calls("tools.prepare")[0]?.slice(0, 1)).toEqual(["linux"]);
+  expect(calls("tools.prepare")[0]?.[2]).toEqual({
+    id: "orca",
+    action: "launch",
+    cwd: "/remote/original",
+    sessionId: "correct-session",
+    surface: "desktop",
+  });
+  expect(mocks.openTerminal).not.toHaveBeenCalled();
+  expect(mocks.createTerminal).toHaveBeenCalledWith(
+    expect.objectContaining({ cwd: "/remote/original", command: "original-app" }),
+  );
+  expect(calls("composition.create")).toHaveLength(0);
+  expect(calls("composition.bind")[0]?.[2]).toMatchObject({
+    id: "correct-session",
+    endpoint: { kind: "desktop", serverId: "linux", agentId: "terminal", cwd: "/remote/original" },
+  });
+  expect(result.current.session?.id).toBe("correct-session");
+});
+
+it("returns from a terminal to its same logical session and original owning folder without treating it as an agent", async () => {
+  const endpoint = {
+    id: "terminal-link",
+    serverId: "linux",
+    agentId: "original-terminal",
+    kind: "terminal" as const,
+    provider: "goose",
+    harness: "goose",
+    cwd: "/original/remote",
+    createdAt: "now",
+  };
+  const original = mocks.rpc.getMockImplementation()!;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "composition.list")
+      return { projects: [project], sessions: [{ ...session, endpoints: [endpoint] }], total: 1 };
+    if (contract.name === "composition.read")
+      return { ...session, endpoints: [endpoint], activeEndpointId: endpoint.id };
+    return original(server, contract, input);
+  });
+  const { result } = renderHook(() =>
+    useHubController({
+      ...props,
+      params: {
+        terminalId: "original-terminal",
+        serverId: "linux",
+        cwd: "/untrusted-current",
+        workspaceId: "workspace",
+      },
+    }),
+  );
+  await waitFor(() => expect(result.current.session?.id).toBe("session"));
+  expect(result.current.target).toBe("linux");
+  expect(result.current.cwd).toBe("/original/remote");
+  expect(result.current.toolId).toBe("goose");
+  expect(result.current.tab).toBe("Sessions");
+  expect(mocks.refreshAgent).not.toHaveBeenCalled();
+  expect(calls("composition.create")).toHaveLength(0);
+});
+
+it("keeps an unlinked terminal folder and an explicit notice instead of restoring an unrelated session", async () => {
+  saveSetupReturn("mac", {
+    projectId: project.id,
+    sessionId: session.id,
+    target: "mac",
+    toolId: "codex",
+    cwd: "/old",
+    title: "Old",
+    tab: "Tools",
+  });
+  const { result } = renderHook(() =>
+    useHubController({
+      ...props,
+      params: { terminalId: "ordinary-terminal", serverId: "linux", cwd: "/original/project" },
+    }),
+  );
+  await waitFor(() => expect(result.current.notice).toContain("This terminal is not linked"));
+  expect(result.current.session).toBeNull();
+  expect(result.current.cwd).toBe("/original/project");
+  expect(result.current.target).toBe("linux");
+  expect(mocks.refreshAgent).not.toHaveBeenCalled();
+  expect(calls("composition.read")).toHaveLength(0);
+  expect(calls("composition.create")).toHaveLength(0);
+});
+
+it("does not create a native agent when the current host view cannot open conversations", async () => {
+  const { result } = renderHook(() => useHubController({ ...props, navigation: undefined }));
+  act(() => result.current.setCwd("/project"));
+  await waitFor(() => expect(result.current.modelId).toBe("model"));
+  await expect(result.current.start(false)).rejects.toThrow("cannot open native conversations");
+  expect(mocks.createAgent).not.toHaveBeenCalled();
+  expect(calls("composition.create")).toHaveLength(0);
+});
+
+it("links a restarted managed web tool's new terminal into the same logical session and recovers binding without another launch", async () => {
+  const endpoint = {
+    id: "web",
+    kind: "web" as const,
+    serverId: "mac",
+    agentId: "codeg",
+    provider: "codeg",
+    cwd: "/project",
+    workspaceId: "old-workspace",
+    createdAt: "now",
+  };
+  const original = mocks.rpc.getMockImplementation()!;
+  let failed = true;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "composition.read") return { ...session, endpoints: [endpoint] };
+    if (contract.name === "tools.list") return [{ ...tool, id: "codeg" }];
+    if (contract.name === "composition.bind" && failed) throw new Error("Link unavailable");
+    return original(server, contract, input);
+  });
+  const { result } = renderHook(() => useHubController(props));
+  act(() => {
+    result.current.setProject(project);
+    result.current.setSession({ ...session, endpoints: [endpoint] });
+  });
+  await act(async () => {
+    await expect(result.current.openEndpoint(endpoint, session.id)).rejects.toThrow(
+      "Link unavailable",
+    );
+  });
+  expect(result.current.pendingLaunch?.endpoint).toMatchObject({
+    kind: "terminal",
+    agentId: "terminal",
+    provider: "codeg",
+  });
+  expect(mocks.openTerminal).not.toHaveBeenCalled();
+  await expect(result.current.openEndpoint(endpoint, session.id)).rejects.toThrow("Retry linking");
+  failed = false;
+  await act(async () => result.current.recoverLaunch());
+  expect(mocks.createTerminal).toHaveBeenCalledTimes(1);
+  expect(calls("composition.create")).toHaveLength(0);
+  expect(result.current.session?.id).toBe(session.id);
+  expect(calls("composition.bind").at(-1)?.[2]).toMatchObject({
+    id: session.id,
+    endpoint: { kind: "terminal", agentId: "terminal", provider: "codeg" },
+  });
+  expect(mocks.openTerminal).toHaveBeenCalledWith({
+    serverId: "mac",
+    workspaceId: "workspace",
+    terminalId: "terminal",
+  });
+});
+
+it("retains a failed terminal lookup until explicit retry then reconnects exactly once", async () => {
+  const endpoint = {
+    id: "terminal-link",
+    serverId: "linux",
+    agentId: "original-terminal",
+    kind: "terminal" as const,
+    provider: "goose",
+    cwd: "/remote/project",
+    createdAt: "now",
+  };
+  const original = mocks.rpc.getMockImplementation()!;
+  let failed = true;
+  mocks.rpc.mockImplementation((server, contract, input) => {
+    if (contract.name === "composition.list" && input.query === undefined) {
+      if (failed) throw new Error("Temporary lookup failure");
+      return { projects: [project], sessions: [{ ...session, endpoints: [endpoint] }], total: 1 };
+    }
+    return original(server, contract, input);
+  });
+  const entryProps = {
+    ...props,
+    params: { terminalId: "original-terminal", serverId: "linux", cwd: "/remote/project" },
+  };
+  const { result, rerender } = renderHook(() => useHubController(entryProps));
+  await waitFor(() => expect(result.current.terminalEntryFailed).toBe(true));
+  const lookups = () => calls("composition.list").filter((call) => call[2].query === undefined);
+  expect(lookups()).toHaveLength(1);
+  rerender();
+  await act(async () => undefined);
+  expect(lookups()).toHaveLength(1);
+  expect(result.current.error).toBe("Temporary lookup failure");
+  failed = false;
+  act(() => result.current.retryTerminalEntry());
+  await waitFor(() => expect(result.current.session?.id).toBe(session.id));
+  expect(lookups()).toHaveLength(2);
+  expect(result.current.terminalEntryFailed).toBe(false);
+  expect(result.current.error).toBe("");
 });

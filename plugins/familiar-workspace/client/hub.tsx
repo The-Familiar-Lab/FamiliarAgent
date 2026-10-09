@@ -5,6 +5,7 @@ import { useHubController, TABS, type HubProps } from "./hub/controller.js";
 import { useHubUi, ROW, HubDisclosure, HubPicker } from "./hub/ui.js";
 import { HubSelection } from "./hub/selection.js";
 import { HubWorkspace } from "./hub/workspace.js";
+import { HubActivity } from "./hub/activity.js";
 import { HubProjects } from "./hub/projects.js";
 import { HubSessions } from "./hub/sessions.js";
 import { HubFiles } from "./hub/files.js";
@@ -21,12 +22,11 @@ const viewOptions = TABS.filter((item) => item !== "Projects").map((item) => ({
   id: item,
   label: item === "Sessions" ? "Sessions & workspace" : item,
 }));
+const isContextEntry = (params: HubProps["params"]) =>
+  Boolean(params?.agentId || params?.terminalId || params?.toolId || params?.historyId);
 export function FamiliarHub(props: HubProps) {
   const hub = useHubController(props);
-  const onboarding = useOnboarding(
-    hub,
-    Boolean(props.params?.agentId || props.params?.toolId || props.params?.historyId),
-  );
+  const onboarding = useOnboarding(hub, isContextEntry(props.params));
   const ui = useHubUi(props.theme, hub.busy);
   const navigationUi = useHubUi(props.theme, false);
   const results = useResultFlow(hub, props.host.id, props.params);
@@ -121,6 +121,9 @@ export function FamiliarHub(props: HubProps) {
           {hub.error}
         </Text>
       ) : null}
+      {hub.terminalEntryFailed
+        ? navigationUi.button("Retry terminal session lookup", hub.retryTerminalEntry)
+        : null}
       {Object.entries(hub.toolCatalogErrors)
         .filter(([, error]) => error)
         .map(([serverId, error]) => (
@@ -164,11 +167,13 @@ export function FamiliarHub(props: HubProps) {
             <View style={styles.workspace}>
               <HubSelection hub={hub} ui={ui} props={props} />
               <HubWorkspace hub={hub} ui={ui} props={props} />
+              <HubActivity hub={hub} ui={ui} flow={results} />
             </View>
           </View>
         </>
       ) : (
         <>
+          {ui.button("Back to sessions", () => hub.setTab("Sessions"))}
           <HubSelection hub={hub} ui={ui} props={props} />
           <HubPicker
             label="Show"

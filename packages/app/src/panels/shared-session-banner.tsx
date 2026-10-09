@@ -37,12 +37,12 @@ export const SharedSessionBanner = memo(function SharedSessionBanner({
         <View style={styles.message}>
           <Text style={styles.title}>Shared session connected</Text>
           <Text style={styles.description}>
-            Memory and earlier conversations are available to this agent.
+            Follow original tools, results and shared context in Familiar Hub.
           </Text>
         </View>
       ) : null}
       <Button size="sm" variant="secondary" onPress={openHub}>
-        Open Familiar Hub
+        {isLinked ? "View session activity" : "Open Familiar Hub"}
       </Button>
     </View>
   );

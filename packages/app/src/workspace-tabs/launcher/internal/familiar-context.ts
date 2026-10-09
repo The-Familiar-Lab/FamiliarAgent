@@ -53,6 +53,7 @@ export function familiarHubTarget(input: {
   serverId: string;
   workspaceId: string;
   agentId?: string;
+  terminalId?: string;
   cwd?: string;
   toolId?: string;
 }): PluginWorkspaceTabTarget {
@@ -65,6 +66,7 @@ export function familiarHubTarget(input: {
       serverId: input.serverId,
       workspaceId: input.workspaceId,
       ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.terminalId ? { terminalId: input.terminalId } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.toolId ? { toolId: input.toolId, setup: "1" } : {}),
     },

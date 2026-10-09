@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { toolRun, type ToolRun, type ToolRunSummary } from "../../shared/tool-actions.js";
 import type { ToolActionRequest, ToolActionResult } from "./contracts.js";
+import { toolRunActivity } from "../../shared/activity.js";
 
 export function requestDigest(request: ToolActionRequest): string {
   const ordered = {
@@ -179,6 +180,25 @@ export class ToolRunStore {
       .get(sessionId) as { count: number };
     return {
       runs: rows.map((row) => summarizeToolRun(toolRun.parse(JSON.parse(row.data)))),
+      total: total.count,
+    };
+  }
+  listActivity(sessionId: string, offset: number, limit: number) {
+    // Project only metadata in SQLite; activity polling must not load prompts or full results.
+    const rows = this.db
+      .prepare(`SELECT id AS runId,
+      json_extract(data,'$.request.toolId') AS toolId,
+      json_extract(data,'$.request.action') AS action,
+      json_extract(data,'$.request.cwd') AS cwd,
+      state, createdAt, json_extract(data,'$.updatedAt') AS updatedAt,
+      json_type(data,'$.result')='object' AS hasResult
+      FROM tool_runs WHERE sessionId=? ORDER BY createdAt DESC,id LIMIT ? OFFSET ?`)
+      .all(sessionId, limit, offset) as Record<string, unknown>[];
+    const total = this.db
+      .prepare("SELECT count(*) AS count FROM tool_runs WHERE sessionId=?")
+      .get(sessionId) as { count: number };
+    return {
+      runs: rows.map((row) => toolRunActivity.parse({ ...row, hasResult: row.hasResult === 1 })),
       total: total.count,
     };
   }

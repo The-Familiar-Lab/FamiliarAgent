@@ -59,9 +59,9 @@ describe("shared session banner", () => {
     );
     expect(view.getByText("Shared session connected")).toBeTruthy();
     expect(
-      view.getByText("Memory and earlier conversations are available to this agent."),
+      view.getByText("Follow original tools, results and shared context in Familiar Hub."),
     ).toBeTruthy();
-    fireEvent.click(view.getByRole("button", { name: "Open Familiar Hub" }));
+    fireEvent.click(view.getByRole("button", { name: "View session activity" }));
     expect(navigateToWorkspace).toHaveBeenLastCalledWith({
       serverId: "remote/host",
       workspaceId: "workspace",
@@ -77,7 +77,7 @@ describe("shared session banner", () => {
     view.rerender(
       <SharedSessionBanner serverId="local" workspaceId="workspace" agentId="agent/one" />,
     );
-    fireEvent.click(view.getByRole("button", { name: "Open Familiar Hub" }));
+    fireEvent.click(view.getByRole("button", { name: "View session activity" }));
     expect(navigateToWorkspace).toHaveBeenLastCalledWith(
       expect.objectContaining({
         serverId: "local",

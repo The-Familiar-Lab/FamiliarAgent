@@ -9,6 +9,11 @@ interface Controls {
   hub: HubController;
   ui: HubUi;
 }
+function launchReady(hub: HubController): boolean {
+  return hub.selectedTool?.nativeProvider
+    ? !!hub.modelId
+    : !!hub.selectedTool?.installed || hub.selectedTool?.launchSurface === "desktop";
+}
 
 function NativeModels({ hub, ui }: Controls) {
   const modelOptions = useMemo(
@@ -101,7 +106,9 @@ function LaunchForm({
         .filter(
           (item) =>
             item.serverId === hub.target &&
-            (item.tool.nativeProvider || item.tool.modes.includes("terminal")),
+            (item.tool.nativeProvider ||
+              item.tool.installed ||
+              item.tool.launchSurface === "desktop"),
         )
         .map(({ tool }) => ({
           id: tool.id,
@@ -117,9 +124,9 @@ function LaunchForm({
       return;
     }
     if (selected)
-      void hub.run(() => hub.launch(hub.target, selected, "launch", "terminal", { fork: isFork }));
+      void hub.run(() => hub.launch(hub.target, selected, "launch", undefined, { fork: isFork }));
   };
-  const ready = selected?.nativeProvider ? !!hub.modelId : !!selected?.installed;
+  const ready = launchReady(hub);
   return (
     <>
       <HubTargetPicker hub={hub} ui={ui} />
@@ -188,9 +195,12 @@ export function HubWorkspace({
           </Text>
           <View style={ROW}>
             {active
-              ? ui.button("Open current conversation", () => {
-                  void hub.run(() => hub.openEndpoint(active, hub.session!.id));
-                })
+              ? ui.button(
+                  active.kind === "agent" ? "Open current conversation" : "Open current tool",
+                  () => {
+                    void hub.run(() => hub.openEndpoint(active, hub.session!.id));
+                  },
+                )
               : null}
             {ui.button(
               hub.session ? "Continue with another tool" : "New session",

@@ -41,6 +41,57 @@ describe("terminal web view readiness", () => {
     expect(detector.feed("x".repeat(100_000) + line)).toBeNull();
     expect(detector.feed(line)).toEqual(view);
   });
+  it("opens Codeg only from its original bound-server announcement, without copying its token", () => {
+    const prefix = "2026-10-09T19:19:48.647020Z  INFO codeg_server: ";
+    const detector = new TerminalWebViewDetector();
+    expect(
+      detector.feed("[SERVER] Token: secret-credential\n" + prefix + "[SERVER] Listening on:\n"),
+    ).toBeNull();
+    const codegView = detector.feed(prefix + "  http://127.0.0.1:40039\n");
+    expect(codegView).toEqual({
+      title: "Codeg",
+      url: "http://127.0.0.1:40039/",
+      preserveHost: false,
+    });
+    expect(JSON.stringify(codegView)).not.toContain("secret-credential");
+    expect(detector.feed("Codeg view: http://127.0.0.1:40039\n")).toEqual(codegView);
+    expect(detector.feed("Codeg view: http://127.0.0.1:40039/?token=secret\n")).toBeNull();
+    expect(detector.feed(prefix + "  http://127.0.0.1:40039\n")).toBeNull();
+    expect(
+      detector.feed(prefix + "[SERVER] Listening on:\n" + prefix + "http://example.com:40039/\n"),
+    ).toBeNull();
+    expect(
+      detector.feed(
+        prefix +
+          "[SERVER] Listening on:\n[SERVER] Token: ignored\n" +
+          prefix +
+          "http://127.0.0.1:40039/\n",
+      ),
+    ).toBeNull();
+  });
+  it("recognizes the original superharness dashboard and project announcement across chunks", () => {
+    const detector = new TerminalWebViewDetector();
+    const announcement = "dashboard: http://127.0.0.1:47878\r\nproject: /tmp/my project\r\n";
+    for (let index = 1; index < announcement.length; index++) {
+      detector.reset();
+      expect(detector.feed(announcement.slice(0, index))).toBeNull();
+      expect(detector.feed(announcement.slice(index))).toEqual({
+        title: "superharness",
+        url: "http://127.0.0.1:47878/",
+        preserveHost: true,
+      });
+    }
+  });
+  it.each([
+    "dashboard: http://127.0.0.1:47878\n",
+    "dashboard: http://127.0.0.1:47878\nother output\nproject: /tmp/project\n",
+    "dashboard: http://example.com:47878\nproject: /tmp/project\n",
+    "dashboard: http://127.0.0.1:47878/?token=secret\nproject: /tmp/project\n",
+    "dashboard: http://127.0.0.1:47878\nproject: \n",
+    "dashboard: http://127.0.0.1:47878\n" + "x".repeat(5000) + "\nproject: /tmp/project\n",
+  ])("does not open incomplete, unrelated or unsafe dashboard output", (input) => {
+    expect(new TerminalWebViewDetector().feed(input)).toBeNull();
+  });
   it("reconstructs a soft-wrapped snapshot and preserves its private query", () => {
     const text = line.trim();
     const cols = 30;

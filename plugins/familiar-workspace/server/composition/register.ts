@@ -44,6 +44,8 @@ import { ToolActionSettings } from "../tool-actions/settings.js";
 import type { ToolActions } from "../tool-actions/service.js";
 import { registerToolActions } from "../tool-actions/register.js";
 import { toolResultReader } from "../tool-actions/results.js";
+import { readCompositionActivity } from "../../shared/activity.js";
+import { readSessionActivity } from "./activity.js";
 
 export function registerComposition(
   server: PluginServerContext,
@@ -211,6 +213,19 @@ export function registerComposition(
   server.handle(readComposition, async (input) =>
     readComposition.output.parse(await sessionInvoke(readComposition.name, input)),
   );
+  server.handle(readCompositionActivity, async (input, { paseo }) => {
+    const session = readComposition.output.parse(
+      await sessionInvoke(readComposition.name, { id: input.id }),
+    );
+    return readSessionActivity({
+      session,
+      paseo,
+      serverId: options.serverId,
+      runs: options.actions?.store,
+      offset: input.offset,
+      limit: input.limit,
+    });
+  });
   server.handle(updateComposition, async (input) =>
     updateComposition.output.parse(await sessionInvoke(updateComposition.name, input)),
   );

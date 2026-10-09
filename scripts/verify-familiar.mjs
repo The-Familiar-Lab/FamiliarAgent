@@ -173,6 +173,7 @@ if (options.has("--integration"))
     "packages/server/src/server/daemon-e2e/file-download.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/terminal-launch.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-workspace.e2e.test.ts",
+    "packages/server/src/server/daemon-e2e/familiar-activity.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/project-icon-isolation.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-advisor.e2e.test.ts",
     "packages/server/src/server/daemon-e2e/familiar-fork.e2e.test.ts",

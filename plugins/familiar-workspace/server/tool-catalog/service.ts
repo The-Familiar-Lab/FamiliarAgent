@@ -1,4 +1,5 @@
 import { guideForTool } from "./guides.js";
+import { managedDesktopPath, managedLaunchSurface, prepareManagedLaunch } from "./launch.js";
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
@@ -100,11 +101,12 @@ export class ToolCatalog {
     }
     return undefined;
   }
-  private async desktop(app: string | undefined): Promise<string | undefined> {
+  private async desktop(app: string | undefined, managed?: string): Promise<string | undefined> {
     if (!app || this.platform !== "darwin") return undefined;
     for (const candidate of [
       path.join("/Applications", app),
       path.join(this.home, "Applications", app),
+      ...(managed ? [managed] : []),
     ]) {
       try {
         if ((await stat(candidate)).isDirectory()) return candidate;
@@ -235,23 +237,26 @@ export class ToolCatalog {
     const custom = tool.registration;
     const command = custom?.launch?.command ?? tool.command;
     const executablePath = command ? await this.findExecutable(command) : undefined;
-    const desktopApp = await this.desktop(tool.desktopApp);
     const canonicalInstall = await integratedInstallation(this.root, tool.id);
+    const desktopApp = await this.desktop(
+      tool.desktopApp,
+      canonicalInstall ? managedDesktopPath(this.root, tool.id, this.platform) : undefined,
+    );
+    const managedSurface = canonicalInstall
+      ? managedLaunchSurface(tool.id, this.platform)
+      : undefined;
+    const launchSurface = preferredLaunchSurface(tool, desktopApp, managedSurface);
     let installReason: string | undefined;
     try {
       await this.installPlan(tool, this.home);
     } catch (error) {
       installReason = (error as Error).message;
     }
-    const modes: ToolEntry["modes"] = [];
-    if (tool.nativeProvider) modes.push("agent");
-    if (command) modes.push("terminal");
-    if (desktopApp) modes.push("desktop");
-    if (custom?.url) modes.push("web");
-    if (!modes.length) modes.push("reference");
+    const modes = launchModes(tool, desktopApp, managedSurface);
     return {
       ...describeTool(tool),
       modes,
+      launchSurface,
       custom: Boolean(custom),
       installed: Boolean(executablePath || canonicalInstall || (!command && desktopApp)),
       executablePath,
@@ -321,7 +326,13 @@ export class ToolCatalog {
     if (value.action === "install") return this.installPlan(tool, cwd);
     const url = tool.registration?.url;
     if (value.surface === "web" || (!value.surface && url)) {
-      if (!url) throw new Error("No web URL is configured for this tool on this server");
+      if (!url) {
+        if (tool.id === "codeg") {
+          const managed = await this.managedPlan(tool, cwd, value);
+          if (managed) return managed;
+        }
+        throw new Error("No web URL is configured for this tool on this server");
+      }
       return {
         toolId: tool.id,
         action: "launch",
@@ -334,26 +345,48 @@ export class ToolCatalog {
     }
     if (
       value.surface === "desktop" ||
-      (!value.surface && !tool.command && !tool.registration?.launch)
+      (!value.surface && !tool.registration?.launch && (await this.launchDesktop(tool)))
     ) {
-      const app = await this.desktop(tool.desktopApp);
+      const app = await this.launchDesktop(tool);
       if (!app) throw new Error("The original desktop app is not installed on this host");
-      return {
-        toolId: tool.id,
-        action: "launch",
-        mode: "desktop",
-        cwd,
-        command: "/usr/bin/open",
-        args: ["-a", app, ...(tool.desktopOpensFolder === false ? [] : [cwd])],
-        notes: [
-          ...(tool.notes ?? []),
-          tool.desktopOpensFolder === false
-            ? "Opens the original app. The FamiliarAgent project and context remain linked here; use the app's own actions to attach them. No conversation is automatically imported."
-            : "Opens the original app with this project folder. It does not import a different runtime's binary session state.",
-        ],
-      };
+      return desktopPlan(tool, cwd, app);
     }
+    const managed = await this.managedPlan(tool, cwd, value);
+    if (managed) return managed;
     return this.terminalPlan(tool, cwd, value.contextPath, value.sessionId);
+  }
+  private async managedPlan(
+    tool: RegisteredTool,
+    cwd: string,
+    value: z.infer<typeof prepareTool.input>,
+  ): Promise<ToolPlan | undefined> {
+    if (tool.registration?.launch) return undefined;
+    if (
+      tool.actionsOnly ||
+      managedLaunchSurface(tool.id, this.platform) === "actions" ||
+      (!tool.command && !managedLaunchSurface(tool.id, this.platform))
+    )
+      throw new Error(
+        `${tool.name} requires an original action or configured web URL. Choose Run actions and select the native project, workspace or command.`,
+      );
+    if (tool.command || !(await integratedInstallation(this.root, tool.id))) return undefined;
+    const contextPath = value.contextPath ? await this.contextFile(value.contextPath) : undefined;
+    return prepareManagedLaunch({
+      root: this.root,
+      id: tool.id,
+      cwd,
+      platform: this.platform,
+      searchPath: this.searchPath(),
+      sessionId: value.sessionId,
+      contextPath,
+      resolveCommand: (name) => this.resolveCommand(name),
+    });
+  }
+  private async launchDesktop(tool: RegisteredTool): Promise<string | undefined> {
+    const managed = (await integratedInstallation(this.root, tool.id))
+      ? managedDesktopPath(this.root, tool.id, this.platform)
+      : undefined;
+    return this.desktop(tool.desktopApp, managed);
   }
   private async terminalPlan(
     tool: RegisteredTool,
@@ -447,4 +480,47 @@ function entryNotes(tool: RegisteredTool, modes: ToolEntry["modes"]): string[] {
       "Configured web URL; availability and authentication are checked by the original page when opened.",
     );
   return notes;
+}
+
+function preferredLaunchSurface(
+  tool: RegisteredTool,
+  desktop: string | undefined,
+  managed: ToolEntry["launchSurface"],
+): ToolEntry["launchSurface"] {
+  if (tool.registration?.url) return "web";
+  if (tool.registration?.launch) return "terminal";
+  if (desktop) return "desktop";
+  if (tool.actionsOnly) return "actions";
+  if (managed) return managed;
+  return tool.command ? "terminal" : "actions";
+}
+
+function launchModes(
+  tool: RegisteredTool,
+  desktop: string | undefined,
+  managed: ToolEntry["launchSurface"],
+): ToolEntry["modes"] {
+  const modes: ToolEntry["modes"] = [];
+  if (tool.nativeProvider) modes.push("agent");
+  if ((tool.command && !tool.actionsOnly) || tool.registration?.launch || managed === "terminal")
+    modes.push("terminal");
+  if (desktop) modes.push("desktop");
+  if (tool.registration?.url) modes.push("web");
+  return modes.length ? modes : ["reference"];
+}
+function desktopPlan(tool: RegisteredTool, cwd: string, app: string): ToolPlan {
+  return {
+    toolId: tool.id,
+    action: "launch",
+    mode: "desktop",
+    cwd,
+    command: "/usr/bin/open",
+    args: ["-a", app, ...(tool.desktopOpensFolder === false ? [] : [cwd])],
+    notes: [
+      ...(tool.notes ?? []),
+      tool.desktopOpensFolder === false
+        ? "Opens the original app. The FamiliarAgent project and context remain linked here; use the app's own actions to attach them. No conversation is automatically imported."
+        : "Opens the original app with this project folder. It does not import a different runtime's binary session state.",
+    ],
+  };
 }

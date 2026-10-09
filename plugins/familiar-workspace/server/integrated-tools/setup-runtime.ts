@@ -42,9 +42,27 @@ const settings=JSON.parse(fs.readFileSync(config,'utf8'));
 const token=fs.readFileSync(tokenFile,'utf8').trim();
 if(!/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid private Codeg token.');
 const child=spawn(binary,[],{cwd:require('node:path').dirname(binary),stdio:'inherit',env:{...process.env,PATH:require('node:path').dirname(process.execPath)+require('node:path').delimiter+(process.env.PATH||''),CODEG_HOST:'127.0.0.1',CODEG_PORT:String(settings.port),CODEG_DATA_DIR:profile,CODEG_TOKEN:token}});
-for(const signal of ['SIGTERM','SIGINT']) process.on(signal,()=>child.kill(signal));
-child.once('error',error=>{console.error(error.message);process.exitCode=1;});
-child.once('exit',(code)=>{process.exitCode=code??1;});
+let stopped=false, pending, retry;
+function stopProbe(){stopped=true;pending?.abort();clearTimeout(retry);}
+for(const signal of ['SIGTERM','SIGINT']) process.on(signal,()=>{stopProbe();child.kill(signal);});
+child.once('error',error=>{stopProbe();console.error(error.message);process.exitCode=1;});
+child.once('exit',(code)=>{stopProbe();process.exitCode=code??1;});
+(async()=>{
+ const url='http://127.0.0.1:'+settings.port;const deadline=Date.now()+15000;
+ while(!stopped&&Date.now()<deadline){
+  pending=new AbortController();const timeout=setTimeout(()=>pending.abort(),1000);
+  try{
+   const response=await fetch(url+'/api/health',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:'{}',signal:pending.signal});
+   if(response.status!==200){await response.body?.cancel();throw new Error('Not ready');}
+   const reader=response.body.getReader();let bytes=0;const chunks=[];
+   while(true){const item=await reader.read();if(item.done)break;bytes+=item.value.length;if(bytes>4096){await reader.cancel();throw new Error('Invalid health response');}chunks.push(Buffer.from(item.value));}
+   if(JSON.parse(Buffer.concat(chunks).toString('utf8')).status==='ok'&&!stopped&&child.exitCode===null&&child.signalCode===null){console.log('Codeg view: '+url);return;}
+  }catch{/* Original runtime remains authoritative; never report an unverified URL. */}
+  finally{clearTimeout(timeout);}
+  if(!stopped)await new Promise(resolve=>{retry=setTimeout(resolve,250);retry.unref();});
+ }
+ if(!stopped)console.error('Codeg readiness was not confirmed. Check the original server, then open its view again.');
+})().catch(()=>{if(!stopped)console.error('Codeg readiness could not be checked.');});
 `;
 
 export async function prepareCodegRuntime(options: {

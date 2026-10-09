@@ -78,7 +78,7 @@ function ToolCard({
                 {ui.button(
                   modeLabel[mode],
                   () => launch("launch", mode),
-                  (mode !== "web" && !tool.installed) || !usableFolder,
+                  (mode !== "web" && mode !== "desktop" && !tool.installed) || !usableFolder,
                 )}
               </View>
             ))}

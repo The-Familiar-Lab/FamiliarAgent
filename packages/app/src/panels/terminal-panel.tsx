@@ -9,6 +9,8 @@ import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-
 import { getIsElectron } from "@/constants/platform";
 import { createWorkspaceBrowser, getBrowserRecord, useBrowserStore } from "@/desktop/browser/store";
 import { prepareHostBrowserUrl } from "@/plugins/host-navigation";
+import { openFamiliarHub } from "@/plugins/familiar-navigation";
+import { Button } from "@/components/ui/button";
 import type { OpenTerminalWebView } from "@/terminal/runtime/use-terminal-web-view";
 import { TerminalPane } from "@/components/terminal-pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
@@ -20,6 +22,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
+const PANEL_STYLE = { flex: 1 } as const;
+const SESSION_LINK_STYLE = { alignItems: "flex-end", padding: 4 } as const;
 
 const CENTERED_PADDED_STYLE = {
   flex: 1,
@@ -81,6 +85,7 @@ function useTerminalPanelDescriptor(
 
 function TerminalPanel() {
   const { serverId, workspaceId, target, openFileInWorkspace, openTab } = usePaneContext();
+  invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
@@ -89,6 +94,15 @@ function TerminalPanel() {
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const isGitCheckout = workspaceFields?.isGitCheckout ?? false;
   const openCompactFileExplorer = usePanelStore((state) => state.openCompactFileExplorer);
+  const openHub = useCallback(() => {
+    if (!workspaceDirectory) return;
+    openFamiliarHub({
+      serverId,
+      workspaceId,
+      cwd: workspaceDirectory,
+      terminalId: target.terminalId,
+    });
+  }, [serverId, workspaceId, workspaceDirectory, target.terminalId]);
   const handleOpenFileExplorer = useCallback(() => {
     if (!workspaceDirectory) {
       return;
@@ -118,7 +132,6 @@ function TerminalPanel() {
     },
     [serverId, openTab],
   );
-  invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {
     return (
@@ -129,16 +142,23 @@ function TerminalPanel() {
   }
 
   return (
-    <TerminalPane
-      serverId={serverId}
-      cwd={workspaceDirectory}
-      terminalId={target.terminalId}
-      isWorkspaceFocused={isWorkspaceFocused}
-      isPaneFocused={isPaneFocused}
-      onOpenWebView={getIsElectron() ? openWebView : undefined}
-      onOpenFileExplorer={handleOpenFileExplorer}
-      onOpenWorkspaceFile={openFileInWorkspace}
-    />
+    <View style={PANEL_STYLE}>
+      <View style={SESSION_LINK_STYLE}>
+        <Button size="sm" variant="secondary" onPress={openHub}>
+          View session activity
+        </Button>
+      </View>
+      <TerminalPane
+        serverId={serverId}
+        cwd={workspaceDirectory}
+        terminalId={target.terminalId}
+        isWorkspaceFocused={isWorkspaceFocused}
+        isPaneFocused={isPaneFocused}
+        onOpenWebView={getIsElectron() ? openWebView : undefined}
+        onOpenFileExplorer={handleOpenFileExplorer}
+        onOpenWorkspaceFile={openFileInWorkspace}
+      />
+    </View>
   );
 }
 

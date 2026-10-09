@@ -12,6 +12,7 @@ export interface BuiltinTool {
   nativeProvider?: string;
   desktopApp?: string;
   desktopOpensFolder?: boolean;
+  actionsOnly?: boolean;
   install?: {
     kind: "npm" | "python" | "native";
     package: string;
@@ -40,6 +41,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "docker-skills",
+    actionsOnly: true,
     name: "Docker Skills",
     description:
       "Docker-authored portable skills for Dockerfiles, Compose, Docker Agent and Sandboxes.",
@@ -98,6 +100,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     nativeProvider: "antigravity",
     install: { kind: "native", package: "antigravity" },
     desktopApp: "Antigravity.app",
+    desktopOpensFolder: false,
     notes: [
       "The current CLI provider and historical IDE transcripts use different native session formats.",
     ],
@@ -202,7 +205,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     sourceUrl: "https://github.com/artificemachine/superharness",
     license: "Apache-2.0",
     command: "superharness",
-    args: ["dashboard-ui"],
+    args: ["dashboard-ui", "--foreground", "--no-open"],
     install: {
       kind: "python",
       package: "superharness",
@@ -220,6 +223,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     sourceUrl: "https://github.com/stablyai/orca",
     license: "MIT",
     desktopApp: "Orca.app",
+    desktopOpensFolder: false,
   },
   {
     id: "hydra",
@@ -229,9 +233,13 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     sourceUrl: "https://github.com/jpdlr/hydra",
     license: "MIT",
     desktopApp: "Hydra.app",
+    desktopOpensFolder: false,
   },
   {
     id: "alethe",
+    actionsOnly: true,
+    desktopApp: "Alethe.app",
+    desktopOpensFolder: false,
     name: "Alethe",
     description: "Original agent orchestration and context system.",
     capabilities: ["orchestration", "context", "workspace"],
@@ -240,6 +248,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "codey",
+    actionsOnly: true,
     name: "Codey",
     description: "Native gateway and multi-channel agent system.",
     capabilities: ["harness", "context", "orchestration"],
@@ -254,9 +263,12 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
     sourceUrl: "https://github.com/spacering-net/codeg",
     license: "Apache-2.0",
     desktopApp: "Codeg.app",
+    desktopOpensFolder: false,
   },
   {
     id: "openharness",
+    command: "harness",
+    args: ["tui"],
     name: "OpenHarness",
     description: "Original agent packs, tools and native orchestration UI.",
     capabilities: ["harness", "context", "skills", "mcp", "orchestration"],
@@ -265,6 +277,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "agents",
+    actionsOnly: true,
     name: "wshobson/agents",
     description: "Shared source skills and native multi-harness plugin adapters.",
     capabilities: ["skills", "mcp", "orchestration"],
@@ -276,6 +289,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "firetower",
+    actionsOnly: true,
     command: "firetower",
     name: "Firetower",
     description: "Original compute pool and remote session management.",
@@ -285,6 +299,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "skulk",
+    actionsOnly: true,
     command: "skulk",
     name: "Skulk",
     description: "Original SSH, worktree and tmux orchestration.",
@@ -294,6 +309,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "bssh",
+    actionsOnly: true,
     command: "bssh",
     name: "bssh",
     description: "Original parallel SSH and cluster shell.",
@@ -303,6 +319,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "coder",
+    actionsOnly: true,
     command: "coder",
     name: "Coder",
     description: "Existing development workspace infrastructure.",
@@ -315,6 +332,7 @@ export const BUILTIN_TOOLS: readonly BuiltinTool[] = [
   },
   {
     id: "juicefs",
+    actionsOnly: true,
     command: "juicefs",
     name: "JuiceFS",
     description: "Existing shared filesystem mounts can be mapped as project folders.",
